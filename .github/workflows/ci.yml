@@ -21,5 +21,6 @@ jobs:
       - run: npm run test:coverage
       - run: npm run validate:manifest
       - run: npm run build
+      - run: npm run test:visual
       - run: npx playwright install --with-deps chromium
       - run: xvfb-run --auto-servernum npm run test:e2e

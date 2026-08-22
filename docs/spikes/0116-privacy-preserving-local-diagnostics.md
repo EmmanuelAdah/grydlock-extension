@@ -21,7 +21,10 @@ Adopt a **local-only, counter-based diagnostics model with no automatic transmis
 
 This keeps the current PRIVACY.md claim ("no telemetry") literally true while giving maintainers something to ask for in a bug report: _"open Options, click Export diagnostics, attach the JSON."_
 
-The prototype in `src/diagnostics/` implements the schema, the retention arithmetic, and the redaction guard as pure functions. It is not imported by the shipped extension; wiring is bounded follow-up work described at the end of this document.
+The prototype became the shipped local diagnostics implementation in issue `#128`:
+`src/diagnostics/diagnosticsStore.ts` persists only validated counters and `src/history/History.tsx`
+offers user-initiated export and clear controls. The original design rationale below remains the
+privacy contract for that implementation.
 
 ## Context and problem
 
