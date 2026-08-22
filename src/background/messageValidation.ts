@@ -1,4 +1,12 @@
-import type { RuntimeDecisionMadeMessage, RuntimeSignRequestMessage } from '../intercept/protocol'
+import type {
+  RuntimeDecisionMadeMessage,
+  RuntimeProtectionAdapterStatusMessage,
+  RuntimeProtectionBridgeOnlineMessage,
+  RuntimeProtectionHandshakeAckMessage,
+  RuntimeProtectionHandshakeMessage,
+  RuntimeSignRequestMessage,
+} from '../intercept/protocol'
+import { PROTECTION_PROTOCOL_VERSION } from '../protection/protectionState'
 
 // UUID request IDs are currently 36 characters. The larger bound preserves
 // compatibility with other opaque ID formats without permitting unbounded
@@ -16,6 +24,10 @@ export const MAX_NETWORK_PASSPHRASE_LENGTH = 256
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function hasOnlyKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  return Object.keys(value).every((key) => keys.includes(key))
 }
 
 function isNonEmptyBoundedString(value: unknown, maxLength: number): value is string {
@@ -48,8 +60,68 @@ export function isRuntimeDecisionMadeMessage(
 ): message is RuntimeDecisionMadeMessage {
   return (
     isRecord(message) &&
+    hasOnlyKeys(message, ['type', 'requestId', 'decision']) &&
     message.type === 'DECISION_MADE' &&
     isNonEmptyBoundedString(message.requestId, MAX_REQUEST_ID_LENGTH) &&
     (message.decision === 'proceed' || message.decision === 'cancel')
+  )
+}
+
+function isProtectionAdapter(value: unknown): value is 'freighter' | 'albedo-popup' {
+  return value === 'freighter' || value === 'albedo-popup'
+}
+
+function isProtectionNonce(value: unknown): value is string {
+  return isNonEmptyBoundedString(value, MAX_REQUEST_ID_LENGTH)
+}
+
+/** Validate the bridge's context-liveness signal before recording it. */
+export function isRuntimeProtectionBridgeOnlineMessage(
+  message: unknown,
+): message is RuntimeProtectionBridgeOnlineMessage {
+  return (
+    isRecord(message) &&
+    hasOnlyKeys(message, ['type', 'protocolVersion']) &&
+    message.type === 'PROTECTION_BRIDGE_ONLINE' &&
+    message.protocolVersion === PROTECTION_PROTOCOL_VERSION
+  )
+}
+
+export function isRuntimeProtectionHandshakeMessage(
+  message: unknown,
+): message is RuntimeProtectionHandshakeMessage {
+  return (
+    isRecord(message) &&
+    hasOnlyKeys(message, ['type', 'nonce', 'adapter', 'protocolVersion']) &&
+    message.type === 'PROTECTION_HANDSHAKE' &&
+    isProtectionNonce(message.nonce) &&
+    isProtectionAdapter(message.adapter) &&
+    message.protocolVersion === PROTECTION_PROTOCOL_VERSION
+  )
+}
+
+export function isRuntimeProtectionHandshakeAckMessage(
+  message: unknown,
+): message is RuntimeProtectionHandshakeAckMessage {
+  return (
+    isRecord(message) &&
+    hasOnlyKeys(message, ['type', 'nonce', 'adapter', 'protocolVersion']) &&
+    message.type === 'PROTECTION_HANDSHAKE_ACK' &&
+    isProtectionNonce(message.nonce) &&
+    isProtectionAdapter(message.adapter) &&
+    message.protocolVersion === PROTECTION_PROTOCOL_VERSION
+  )
+}
+
+export function isRuntimeProtectionAdapterStatusMessage(
+  message: unknown,
+): message is RuntimeProtectionAdapterStatusMessage {
+  return (
+    isRecord(message) &&
+    hasOnlyKeys(message, ['type', 'adapter', 'status', 'protocolVersion']) &&
+    message.type === 'PROTECTION_ADAPTER_STATUS' &&
+    isProtectionAdapter(message.adapter) &&
+    (message.status === 'adapter-incompatible' || message.status === 'unsupported') &&
+    message.protocolVersion === PROTECTION_PROTOCOL_VERSION
   )
 }

@@ -4,12 +4,11 @@ import { tierForScore } from '../lib/tiers'
 import './History.css'
 
 type LoadState =
-  | { status: 'loading' }
-  | { status: 'error' }
-  | { status: 'ready'; entries: HistoryEntry[] }
+  { status: 'loading' } | { status: 'error' } | { status: 'ready'; entries: HistoryEntry[] }
 
 export default function History() {
   const [state, setState] = useState<LoadState>({ status: 'loading' })
+  const [diagnosticsMessage, setDiagnosticsMessage] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -30,12 +29,54 @@ export default function History() {
     setState({ status: 'ready', entries: [] })
   }
 
+  function clearDiagnostics() {
+    chrome.runtime?.sendMessage(
+      { type: 'CLEAR_DIAGNOSTICS' },
+      (response: { cleared?: boolean }) => {
+        setDiagnosticsMessage(
+          response?.cleared ? 'Local diagnostics cleared.' : 'Could not clear diagnostics.',
+        )
+      },
+    )
+  }
+
+  function exportDiagnostics() {
+    chrome.runtime?.sendMessage({ type: 'EXPORT_DIAGNOSTICS' }, (report: unknown) => {
+      if (!report) {
+        setDiagnosticsMessage('Could not export diagnostics.')
+        return
+      }
+      const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = 'grydlock-local-diagnostics.json'
+      anchor.click()
+      URL.revokeObjectURL(url)
+      setDiagnosticsMessage('Redacted local diagnostics exported.')
+    })
+  }
+
   return (
     <div className="history">
       <h1>Decision history</h1>
       <p className="privacy-note">
         Stored only on this device (last {HISTORY_LIMIT} decisions). Nothing is ever transmitted.
       </p>
+      <section aria-labelledby="diagnostics-heading">
+        <h2 id="diagnostics-heading">Local diagnostics</h2>
+        <p className="privacy-note">
+          Export contains only hourly closed-set counters and coarse health states. It contains no
+          transaction, destination, URL, request ID, or free-form error data.
+        </p>
+        <button type="button" onClick={exportDiagnostics}>
+          Export diagnostics
+        </button>
+        <button type="button" onClick={clearDiagnostics}>
+          Clear diagnostics
+        </button>
+        {diagnosticsMessage && <p role="status">{diagnosticsMessage}</p>}
+      </section>
       {state.status === 'loading' && <p>Loading…</p>}
       {state.status === 'error' && <p>Could not read history.</p>}
       {state.status === 'ready' &&

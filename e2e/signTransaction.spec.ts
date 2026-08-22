@@ -4,7 +4,14 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { AddressInfo } from 'node:net'
 import { fileURLToPath } from 'node:url'
-import { Account, Asset, Keypair, Networks, Operation, TransactionBuilder } from '@stellar/stellar-sdk'
+import {
+  Account,
+  Asset,
+  Keypair,
+  Networks,
+  Operation,
+  TransactionBuilder,
+} from '@stellar/stellar-sdk'
 import { chromium, expect, test, type BrowserContext, type Page } from '@playwright/test'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -41,9 +48,13 @@ function buildPaymentXdr() {
 }
 
 async function startTestServer(): Promise<TestServer> {
-  const server = createServer((_request, response) => {
+  const server = createServer((request, response) => {
     response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-    response.end('<!doctype html><html><head><title>Freighter Harness</title></head><body></body></html>')
+    response.end(
+      `<!doctype html><html><head><title>Freighter Harness</title></head><body data-route="${
+        request.url ?? '/'
+      }"></body></html>`,
+    )
   })
 
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
@@ -138,6 +149,14 @@ async function submitTransaction(page: Page, xdr: string) {
   )
 }
 
+async function openToolbar(context: BrowserContext): Promise<Page> {
+  const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'))
+  const workerUrl = new URL(worker.url())
+  const toolbar = await context.newPage()
+  await toolbar.goto(`${workerUrl.protocol}//${workerUrl.host}/src/popup/index.html`)
+  return toolbar
+}
+
 async function makeDecision(popupPromise: Promise<Page>, label: 'Proceed' | 'Cancel') {
   const popup = await popupPromise
   await expect(popup.getByRole('heading', { name: /risk/i })).toBeVisible()
@@ -201,5 +220,66 @@ test.describe('Freighter signTransaction interception', () => {
         },
       },
     })
+  })
+
+  test('reports protected only after the injected MAIN, bridge, and worker handshake completes', async () => {
+    const toolbar = await openToolbar(harness!.context)
+    // A toolbar popup is not a tab in normal use. Focus the dApp again so the popup's
+    // active-tab lookup exercises the same target a user would see under the toolbar icon.
+    await harness!.page.bringToFront()
+    await toolbar.getByRole('button', { name: 'Refresh status' }).click()
+
+    await expect(toolbar.getByRole('heading', { name: /protection path checked/i })).toBeVisible({
+      timeout: 10_000,
+    })
+    await toolbar.close()
+  })
+
+  test('re-establishes protection after reload and same-origin navigation', async () => {
+    const toolbar = await openToolbar(harness!.context)
+    await harness!.page.bringToFront()
+    await toolbar.getByRole('button', { name: 'Refresh status' }).click()
+    await expect(toolbar.getByRole('heading', { name: /protection path checked/i })).toBeVisible({
+      timeout: 10_000,
+    })
+
+    await harness!.page.reload()
+    await harness!.page.goto(`${server!.url}/next`)
+    await harness!.page.bringToFront()
+    await toolbar.getByRole('button', { name: 'Refresh status' }).click()
+    await expect(toolbar.getByRole('heading', { name: /protection path checked/i })).toBeVisible({
+      timeout: 10_000,
+    })
+    await toolbar.close()
+  })
+
+  test('surfaces an incompatible protocol observed in a child frame', async () => {
+    const toolbar = await openToolbar(harness!.context)
+    const childFrame = harness!.page.waitForEvent('frameattached')
+    await harness!.page.evaluate((frameUrl) => {
+      const iframe = document.createElement('iframe')
+      iframe.src = frameUrl
+      document.body.append(iframe)
+    }, `${server!.url}/frame`)
+    const child = await childFrame
+    await child.waitForLoadState('domcontentloaded')
+    await child.evaluate(() => {
+      window.postMessage(
+        {
+          source: 'FREIGHTER_EXTERNAL_MSG_REQUEST',
+          type: 'UNSUPPORTED_FREIGHTER_OPERATION',
+        },
+        window.location.origin,
+      )
+    })
+
+    await harness!.page.bringToFront()
+    await toolbar.getByRole('button', { name: 'Refresh status' }).click()
+    await expect(
+      toolbar.getByRole('heading', { name: /wallet protocol is incompatible/i }),
+    ).toBeVisible({
+      timeout: 10_000,
+    })
+    await toolbar.close()
   })
 })
