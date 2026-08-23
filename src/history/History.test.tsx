@@ -7,12 +7,15 @@ describe('History', () => {
   const originalChrome = globalThis.chrome
   const get = vi.fn()
   const remove = vi.fn()
+  const sendMessage = vi.fn()
 
   beforeEach(() => {
     vi.clearAllMocks()
     remove.mockResolvedValue(undefined)
-    // @ts-expect-error test-only stub of the chrome extension API
-    globalThis.chrome = { storage: { local: { get, remove } } }
+    globalThis.chrome = {
+      storage: { local: { get, remove } },
+      runtime: { sendMessage },
+    } as unknown as typeof chrome
   })
 
   afterEach(() => {
@@ -76,5 +79,15 @@ describe('History', () => {
     fireEvent.click(await screen.findByText(/clear history/i))
     expect(await screen.findByText(/no decisions recorded yet/i)).toBeInTheDocument()
     expect(remove).toHaveBeenCalledWith(HISTORY_KEY)
+  })
+
+  it('clears diagnostics without clearing history or trusted-address policy', async () => {
+    get.mockResolvedValue({})
+    sendMessage.mockImplementation((_message, callback) => callback({ cleared: true }))
+    render(<History />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Clear diagnostics' }))
+    expect(sendMessage).toHaveBeenCalledWith({ type: 'CLEAR_DIAGNOSTICS' }, expect.any(Function))
+    expect(remove).not.toHaveBeenCalled()
+    expect(await screen.findByRole('status')).toHaveTextContent(/diagnostics cleared/i)
   })
 })

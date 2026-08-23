@@ -2,17 +2,21 @@
 
 [![CI](https://github.com/Gryd-lock/grydlock-extension/actions/workflows/ci.yml/badge.svg)](https://github.com/Gryd-lock/grydlock-extension/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Manifest V3](https://img.shields.io/badge/Manifest-V3-blue)]()
-[![Built with TypeScript](https://img.shields.io/badge/Built%20with-TypeScript-3178c6?logo=typescript&logoColor=white)]()
-[![Status: Early Build](https://img.shields.io/badge/status-early%20build-orange)]()
+[![Manifest V3](https://img.shields.io/badge/Manifest-V3-blue)](<>)
+[![Built with TypeScript](https://img.shields.io/badge/Built%20with-TypeScript-3178c6?logo=typescript&logoColor=white)](<>)
+[![Status: Early Build](https://img.shields.io/badge/status-early%20build-orange)](<>)
 
-**The Gryd Lock browser extension — catches a Stellar transaction before signing and warns the user if the destination looks fraudulent.**
+**The Gryd Lock browser extension — warns before signing only when its current protection path can be observed honestly.**
 
 ## Overview
 
-This is the product. It runs entirely in the user's browser. It hooks the wallet signing flow, decodes the pending transaction, requests a risk score for the destination, and renders a four-tier warning. It never blocks — it warns, and the user decides.
+This runs entirely in the user's browser. It hooks supported wallet signing flows, decodes the
+pending transaction, requests a risk score for the destination, and renders a four-tier warning.
+It never blocks — it warns, and the user decides. The toolbar first reports whether the current
+tab has recently completed the extension's non-financial health check; it never calls a site or
+wallet flow protected merely because the extension is installed.
 
-For detailed information on data handling, data protection, and our no-telemetry architecture, see [PRIVACY.md](file:///c:/Users/USER/grydlock-extension/PRIVACY.md).
+For detailed information on data handling, data protection, and our no-telemetry architecture, see [PRIVACY.md](PRIVACY.md).
 
 > **Status:** Early build. A Freighter `signTransaction` proxy decodes the destination, routes it through the oracle adapter, and shows the warning before signing. An Albedo adapter intercepts the `window.open` popup flow. A live oracle connection is **not yet built** — see the roadmap.
 
@@ -39,11 +43,11 @@ User proceeds or cancels — the extension never blocks
 
 ### Warning tiers
 
-| Score  | Tier     | Behaviour                                |
-| ------ | -------- | ----------------------------------------- |
-| 0–20   | Low      | Green indicator, proceed                  |
-| 21–50  | Elevated | Soft warning                              |
-| 51–75  | High     | Strong warning, checkbox enables proceed  |
+| Score  | Tier     | Behaviour                                   |
+| ------ | -------- | ------------------------------------------- |
+| 0–20   | Low      | Green indicator, proceed                    |
+| 21–50  | Elevated | Soft warning                                |
+| 51–75  | High     | Strong warning, checkbox enables proceed    |
 | 76–100 | Critical | Recommend abort, type `CRITICAL` to proceed |
 
 ## Why Freighter First
@@ -84,6 +88,7 @@ Proxy intercepts first postMessage for 'tx' / 'pay' intents with an xdr field
 ```
 
 **What is not intercepted:**
+
 - **Implicit-flow intents** — these bypass the popup (they send directly via an iframe/session token established earlier). The XDR is not visible at the `window.open` layer.
 - **Non-XDR intents** (`public_key`, `sign_message`, `trust`, `exchange`) — no transaction destination to score; passed through unmodified.
 - **SEP-0007 link handler** (Albedo browser extension variant) — uses a page redirect rather than a popup; different surface not covered by this adapter.
@@ -133,6 +138,19 @@ Privacy:
 - History lives only in `chrome.storage.local` on your device — it is never transmitted anywhere.
 - Storage is capped to the most recent 200 decisions; older entries are dropped automatically.
 - A **Clear history** button on the page deletes everything at once.
+
+## Protection coverage
+
+The toolbar popup reports a fresh, per-tab health status instead of a placeholder score. A
+`protected` result requires a recent MAIN-world → isolated bridge → worker → MAIN-world handshake;
+the handshake carries only an ephemeral nonce, adapter name, and protocol version. It never signs,
+submits, reads, or exposes a transaction. The popup distinguishes stale, bridge unavailable,
+worker unavailable, permission denied, adapter incompatible, unsupported, and unknown states.
+
+This proves Gryd Lock's own execution contexts can communicate, but it cannot prove Chrome will
+order it before another extension's listener. That browser limitation remains visible in the UI and
+is a real-wallet release gate. Supported adapters and explicit exclusions are in
+[protection coverage](docs/protection-coverage.md).
 
 ## How the Pieces Connect
 
@@ -260,9 +278,10 @@ npm run typecheck         # tsc --noEmit
 npm run test:coverage     # Vitest + v8 coverage (enforces thresholds)
 npm run validate:manifest # MV3 / Chrome Web Store policy checks
 npm run build             # tsc -b && vite build && node scripts/build-extension.mjs
+npm run test:visual       # Playwright visual regression snapshots
 ```
 
-All five run in CI (`.github/workflows/ci.yml`) on every push to `main` and on every pull request.
+All six run in CI (`.github/workflows/ci.yml`) on every push to `main` and on every pull request.
 Popup visual regression snapshots run in CI as well via `npm run test:visual`; if a UI change is
 intentional, refresh baselines locally with `npx playwright test --update-snapshots` and commit the
 updated files from `tests/visual/popup.spec.ts-snapshots/`.

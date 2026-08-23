@@ -10,8 +10,12 @@ const entries = [
 
 const sizeBudgets = [
   { outfile: 'dist/mainWorld.js', budgetBytes: 5 * 1024, label: 'mainWorld.js' },
-  { outfile: 'dist/albedoMainWorld.js', budgetBytes: 5 * 1024, label: 'albedoMainWorld.js' },
-  { outfile: 'dist/bridge.js', budgetBytes: 3 * 1024, label: 'bridge.js' },
+  // The Albedo entry includes the popup-specific interception implementation plus the
+  // closed-set protection heartbeat. Keep the budget tight enough to detect SDK or
+  // page-library regressions; the Stellar SDK must remain background-only.
+  { outfile: 'dist/albedoMainWorld.js', budgetBytes: 6 * 1024, label: 'albedoMainWorld.js' },
+  // The isolated bridge owns the versioned handshake and strict message validation.
+  { outfile: 'dist/bridge.js', budgetBytes: 4 * 1024, label: 'bridge.js' },
 ]
 
 function formatBytes(bytes) {
@@ -74,7 +78,10 @@ const failures = budgetResults.filter((result) => !result.withinBudget)
 if (failures.length > 0) {
   throw new Error(
     `Content script bundle size budget exceeded: ${failures
-      .map((result) => `${result.label} is ${formatBytes(result.size)} (budget ${formatBytes(result.budgetBytes)})`)
+      .map(
+        (result) =>
+          `${result.label} is ${formatBytes(result.size)} (budget ${formatBytes(result.budgetBytes)})`,
+      )
       .join(', ')}`,
   )
 }

@@ -26,6 +26,8 @@ export const BUCKET_MS = 3_600_000
 /** Rolling retention window: 7 days of hourly buckets. */
 export const MAX_BUCKETS = 168
 export const RETENTION_MS = MAX_BUCKETS * BUCKET_MS
+/** Bounds attacker-controlled persisted counters and report size. */
+export const MAX_EVENTS_PER_BUCKET = 100_000
 
 /**
  * Closed set of recordable events. Adding a member is a privacy-review change: an event
@@ -51,6 +53,9 @@ export const DIAGNOSTIC_EVENTS = [
   'runtime.message_dropped',
   'runtime.worker_start',
   'storage.write_failure',
+  'protection.handshake.success',
+  'protection.handshake.failure',
+  'protection.permission.changed',
 ] as const
 
 export type DiagnosticEvent = (typeof DIAGNOSTIC_EVENTS)[number]
@@ -116,6 +121,11 @@ const PROHIBITED_PATTERNS: Array<{ rule: string; pattern: RegExp }> = [
   { rule: 'xdr-like-base64', pattern: /[A-Za-z0-9+/]{64,}={0,2}/ },
   { rule: 'url', pattern: /\bhttps?:\/\//i },
   { rule: 'email', pattern: /[\w.+-]+@[\w-]+\.[A-Za-z]{2,}/ },
+  {
+    rule: 'prohibited-field',
+    pattern:
+      /"(?:account|accounts|destination|destinations|xdr|request_?id|url|error|errors)"\s*:/i,
+  },
 ]
 
 const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/
@@ -161,7 +171,10 @@ export function recordEvent(
   if (existing) {
     const updated: DiagnosticsBucket = {
       hourStart,
-      counts: { ...existing.counts, [event]: (existing.counts[event] ?? 0) + 1 },
+      counts: {
+        ...existing.counts,
+        [event]: Math.min((existing.counts[event] ?? 0) + 1, MAX_EVENTS_PER_BUCKET),
+      },
     }
     return {
       schemaVersion: DIAGNOSTICS_SCHEMA_VERSION,
@@ -177,18 +190,31 @@ export function recordEvent(
 
 /**
  * Rebuilds state from untrusted storage, discarding anything that does not match the
- * schema. Persisted diagnostics are attacker-writable in a compromised profile, so the
+ * poc. Persisted diagnostics are attacker-writable in a compromised profile, so the
  * loader never trusts stored keys.
  */
 export function parseState(value: unknown, now: number): DiagnosticsState {
-  const candidate = value as { buckets?: unknown } | null | undefined
-  if (!candidate || !Array.isArray(candidate.buckets)) return createState()
+  const candidate = value as { schemaVersion?: unknown; buckets?: unknown } | null | undefined
+  if (
+    !candidate ||
+    candidate.schemaVersion !== DIAGNOSTICS_SCHEMA_VERSION ||
+    !Array.isArray(candidate.buckets)
+  ) {
+    return createState()
+  }
 
-  const buckets: DiagnosticsBucket[] = []
+  const buckets = new Map<number, Partial<Record<DiagnosticEvent, number>>>()
 
-  for (const entry of candidate.buckets) {
+  // Storage is untrusted. Retain a bounded tail so a corrupt profile cannot consume an
+  // unbounded amount of worker time before retention is applied.
+  for (const entry of candidate.buckets.slice(-(MAX_BUCKETS * 2))) {
     const bucket = entry as { hourStart?: unknown; counts?: unknown } | null
-    if (!bucket || typeof bucket.hourStart !== 'number' || !Number.isFinite(bucket.hourStart)) {
+    if (
+      !bucket ||
+      typeof bucket.hourStart !== 'number' ||
+      !Number.isSafeInteger(bucket.hourStart) ||
+      bucket.hourStart < 0
+    ) {
       continue
     }
     if (!bucket.counts || typeof bucket.counts !== 'object') continue
@@ -196,17 +222,31 @@ export function parseState(value: unknown, now: number): DiagnosticsState {
     const counts: Partial<Record<DiagnosticEvent, number>> = {}
     for (const [key, count] of Object.entries(bucket.counts as Record<string, unknown>)) {
       if (!EVENT_SET.has(key)) continue
-      if (typeof count !== 'number' || !Number.isFinite(count) || count <= 0) continue
+      if (
+        typeof count !== 'number' ||
+        !Number.isSafeInteger(count) ||
+        count <= 0 ||
+        count > MAX_EVENTS_PER_BUCKET
+      ) {
+        continue
+      }
       counts[key as DiagnosticEvent] = Math.floor(count)
     }
 
     if (Object.keys(counts).length === 0) continue
-    buckets.push({ hourStart: floorToHour(bucket.hourStart), counts })
+    const hourStart = floorToHour(bucket.hourStart)
+    const existing = buckets.get(hourStart) ?? {}
+    for (const [event, count] of Object.entries(counts) as Array<[DiagnosticEvent, number]>) {
+      existing[event] = Math.min((existing[event] ?? 0) + count, MAX_EVENTS_PER_BUCKET)
+    }
+    buckets.set(hourStart, existing)
   }
 
-  buckets.sort((a, b) => a.hourStart - b.hourStart)
+  const normalized = [...buckets.entries()]
+    .map(([hourStart, counts]) => ({ hourStart, counts }))
+    .sort((a, b) => a.hourStart - b.hourStart)
 
-  return pruneState({ schemaVersion: DIAGNOSTICS_SCHEMA_VERSION, buckets }, now)
+  return pruneState({ schemaVersion: DIAGNOSTICS_SCHEMA_VERSION, buckets: normalized }, now)
 }
 
 /** Sums every retained bucket, reporting all known events including zeroes. */
