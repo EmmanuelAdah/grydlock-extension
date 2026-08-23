@@ -1,16 +1,18 @@
 import { getScore } from '../adapter/oracleAdapter'
-import { extractDestination } from '../decode/decodeTransaction'
 import {
   clearDiagnostics,
   exportDiagnostics,
   recordDiagnosticEvent,
 } from '../diagnostics/diagnosticsStore'
-import { resolveOutcome } from '../intercept/resolveOutcome'
+import { resolveReviewOutcome } from '../intercept/resolveOutcome'
 import type {
   Decision,
+  RuntimeReviewRequestMessage,
+  RuntimeReviewResponseMessage,
   RuntimeSignOutcomeMessage,
   RuntimeProtectionStatusQueryMessage,
 } from '../intercept/protocol'
+import type { AggregatedReview } from '../review/model'
 import { recordDecision } from '../lib/history'
 import { tierForScore } from '../lib/tiers'
 import {
@@ -19,6 +21,7 @@ import {
   isRuntimeProtectionBridgeOnlineMessage,
   isRuntimeProtectionHandshakeAckMessage,
   isRuntimeProtectionHandshakeMessage,
+  isRuntimeReviewRequestMessage,
   isRuntimeSignRequestMessage,
 } from './messageValidation'
 import {
@@ -37,13 +40,13 @@ export const PROTECTION_STORAGE_KEY = 'protectionStateV1'
 const HANDSHAKE_TTL_MS = 5_000
 const MAX_PENDING_HANDSHAKES = 100
 
-interface PendingInfo {
-  destinations: { destination: string; asset?: string }[]
-  scores: Array<{ destination: string; asset?: string; score: number }>
-  worstScore: number
+interface PendingReview {
+  resolve: (decision: Decision) => void
+  review: AggregatedReview
 }
 
-export const pendingDecisions = new Map<string, (decision: Decision) => void>()
+/** Review data stays in extension memory and is never placed in the popup URL. */
+export const pendingDecisions = new Map<string, PendingReview>()
 
 const protectionRecords = new Map<string, ProtectionRecord>()
 const bridgeContexts = new Map<string, { origin: string; documentId?: string }>()
@@ -286,70 +289,83 @@ function clearBadgeIfIdle() {
   }
 }
 
-function recordFirstDecision(info: PendingInfo, decision: Decision) {
-  const first = info.scores[0]
-  if (!first) return
+function scoreForSeverity(severity: AggregatedReview['severity']): number {
+  switch (severity) {
+    case 'critical':
+      return 85
+    case 'high':
+      return 60
+    case 'warning':
+      return 35
+    default:
+      return 10
+  }
+}
+
+/**
+ * Preserve the existing on-device history contract without persisting raw XDR,
+ * contract identifiers, claimable-balance IDs, memos, or semantic findings.
+ */
+function recordFirstDecision(review: AggregatedReview, decision: Decision) {
+  const evidence = review.evidence.find(
+    (item) =>
+      item.status === 'available' && item.target.type === 'account' && item.score !== undefined,
+  )
+  if (!evidence || evidence.score === undefined) return
 
   void recordDecision({
-    destination: first.destination,
-    asset: first.asset,
-    score: first.score,
-    tier: tierForScore(first.score).tier,
+    destination: evidence.target.value,
+    asset: evidence.target.asset,
+    score: evidence.score,
+    tier: tierForScore(evidence.score).tier,
     decision,
     timestamp: Date.now(),
   }).catch(() => {})
 }
 
-export function requestDecision(requestId: string, info: PendingInfo): Promise<Decision> {
-  const tierInfo = tierForScore(info.worstScore)
+export function requestDecision(requestId: string, review: AggregatedReview): Promise<Decision> {
+  const score = scoreForSeverity(review.severity)
+  const tierInfo = tierForScore(score)
   chrome.action.setBadgeText({ text: '!' })
   chrome.action.setBadgeBackgroundColor({ color: tierInfo.colour })
 
   return new Promise((resolve) => {
-    pendingDecisions.set(requestId, (decision) => {
-      pendingDecisions.delete(requestId)
-      recordFirstDecision(info, decision)
-      resolve(decision)
-      clearBadgeIfIdle()
+    pendingDecisions.set(requestId, {
+      resolve: (decision) => {
+        pendingDecisions.delete(requestId)
+        recordFirstDecision(review, decision)
+        resolve(decision)
+        clearBadgeIfIdle()
+      },
+      review,
     })
 
-    const params = new URLSearchParams({
-      mode: 'intercept',
-      requestId,
-      score: String(info.worstScore),
-    })
-
-    const mapped = info.scores.map((item) => ({
-      destination: item.destination,
-      asset: item.asset ?? '',
-      score: item.score,
-    }))
-
-    if (mapped.length > 1) {
-      params.set('destinations', JSON.stringify(mapped))
-    } else if (mapped.length === 1) {
-      const [first] = mapped
-      params.set('destination', first.destination)
-      if (first.asset) params.set('asset', first.asset)
-    }
+    const params = new URLSearchParams({ mode: 'intercept', requestId })
 
     chrome.windows.create({
       url: chrome.runtime.getURL(`src/popup/index.html?${params.toString()}`),
       type: 'popup',
-      width: 320,
-      height: 420,
+      width: 440,
+      height: 680,
     })
   })
 }
 
+function reviewResponse(message: RuntimeReviewRequestMessage): RuntimeReviewResponseMessage {
+  const pending = pendingDecisions.get(message.requestId)
+  return { type: 'REVIEW_DATA', requestId: message.requestId, review: pending?.review }
+}
+
 chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
   if (isRuntimeSignRequestMessage(message)) {
-    resolveOutcome(
+    resolveReviewOutcome(
       message.xdr,
       {
-        extractDestination,
-        getScore,
-        requestDecision: (info) => requestDecision(message.requestId, info),
+        // The current local adapter only accepts account strings. Keep that
+        // projection here, after the review engine has enforced a typed,
+        // network-scoped account target.
+        getScore: (target) => getScore(target.value),
+        requestDecision: (review) => requestDecision(message.requestId, review),
       },
       message.networkPassphrase,
     )
@@ -373,9 +389,13 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
     return true
   }
 
+  if (isRuntimeReviewRequestMessage(message)) {
+    sendResponse(reviewResponse(message))
+    return undefined
+  }
+
   if (isRuntimeDecisionMadeMessage(message)) {
-    const resolve = pendingDecisions.get(message.requestId)
-    resolve?.(message.decision)
+    pendingDecisions.get(message.requestId)?.resolve(message.decision)
   }
 
   if (isRuntimeProtectionHandshakeMessage(message)) {

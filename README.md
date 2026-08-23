@@ -10,15 +10,18 @@
 
 ## Overview
 
-This runs entirely in the user's browser. It hooks supported wallet signing flows, decodes the
-pending transaction, requests a risk score for the destination, and renders a four-tier warning.
-It never blocks — it warns, and the user decides. The toolbar first reports whether the current
-tab has recently completed the extension's non-financial health check; it never calls a site or
-wallet flow protected merely because the extension is installed.
+This runs entirely in the user's browser. It hooks supported wallet signing flows, builds a
+versioned local review of the complete pending transaction, obtains optional risk evidence only
+for typed account targets, and renders a four-tier warning. A bounded review lets the user decide;
+malformed or over-limit XDR is cancelled rather than forwarded without an honest review. The toolbar
+first reports whether the current tab has recently completed the extension's non-financial health
+check; it never calls a site or wallet flow protected merely because the extension is installed.
 
 For detailed information on data handling, data protection, and our no-telemetry architecture, see [PRIVACY.md](PRIVACY.md).
 
-> **Status:** Early build. A Freighter `signTransaction` proxy decodes the destination, routes it through the oracle adapter, and shows the warning before signing. An Albedo adapter intercepts the `window.open` popup flow. A live oracle connection is **not yet built** — see the roadmap.
+> **Status:** Early build. A Freighter `signTransaction` proxy reviews the complete envelope and
+> shows the warning before signing. An Albedo adapter intercepts the `window.open` popup flow. A
+> live oracle connection is **not yet built** — see the roadmap.
 
 ## What it does
 
@@ -29,13 +32,16 @@ User initiates a transaction in a Stellar wallet
 Extension intercepts the unsigned transaction (Freighter signing flow)
         │
         ▼
-Decode the transaction XDR → extract destination address / asset
+Decode the transaction XDR → build a complete local review
         │
         ▼
-Request a 0–100 risk score  (via grydlock-oracle-adapter)
+Classify each operation as understood, partial, or opaque
         │
         ▼
-Map the score to a warning tier → show the warning
+Request optional 0–100 risk evidence for typed account targets
+        │
+        ▼
+Aggregate semantic findings, incomplete coverage, and evidence → show the warning
         │
         ▼
 User proceeds or cancels — the extension never blocks
@@ -152,6 +158,20 @@ order it before another extension's listener. That browser limitation remains vi
 is a real-wallet release gate. Supported adapters and explicit exclusions are in
 [protection coverage](docs/protection-coverage.md).
 
+## Transaction review coverage
+
+Before a signing request reaches a wallet, Gryd Lock builds a local, versioned review of the
+exact XDR. It shows the exact network passphrase, network-bound digest, envelope/fee source,
+memo, ordered operations, static facts, typed targets, and semantic findings. Every SDK
+operation is classified as **understood**, **partial**, or **opaque**. Partial and opaque
+operations are always shown as incomplete review coverage; they are never presented as a
+low-risk assessment.
+
+Only Stellar account targets are eligible for the current destination scorer. Contract IDs,
+claimable-balance IDs, and liquidity-pool IDs remain typed local review data and are never
+misrepresented as account addresses. Static review does not simulate a transaction or claim to
+know ledger-dependent outcomes.
+
 ## How the Pieces Connect
 
 **Toolbar click (dev/testing)** — unchanged from the stub-only build:
@@ -187,21 +207,20 @@ src/intercept/bridgeEntry.ts      (isolated world; only place with chrome.* API 
         ▼
 src/background/background.ts      (service worker)
         │
-        ├─▶ src/decode/decodeTransaction.ts → extractDestination(xdr)
-        │      returns all distinct destinations, not just one
+        ├─▶ src/decode/transactionReview.ts → extractTransactionReview(xdr)
+        │      retains the exact network-bound digest, ordered operations, static facts,
+        │      typed targets, coverage, and semantic findings
         │
-        ├─▶ each destination scored independently via src/adapter/oracleAdapter.ts
+        ├─▶ typed account targets scored independently via src/adapter/oracleAdapter.ts
         │
-        └─▶ worst-tier destination opens the popup with all destinations
+        └─▶ shared review policy aggregates semantic findings, incomplete coverage, and evidence
                    │
                    ▼
-             src/popup/App.tsx (intercept mode) renders tier + worst-score + every destination
+             src/popup/App.tsx retrieves worker-resident review data by request ID; the popup URL
+             contains no XDR, memo, target, amount, score, or semantic detail
                    │  chrome.runtime.sendMessage({ type: 'DECISION_MADE', ... })
-                   │  (popup closed any other way → chrome.windows.onRemoved fires instead,
-                   │   background resolves that request to 'cancel' so it can't hang forever)
                    ▼
-        background only resolves the pending request if DECISION_MADE's sender window matches
-        the popup it created for that requestId (otherwise ignored) → bridge → mainWorld
+        background resolves the pending request by its one-shot request ID → bridge → mainWorld
                    │
                    ▼
         'cancel'            → mainWorld synthesizes a decline FREIGHTER_EXTERNAL_MSG_RESPONSE;
@@ -233,22 +252,16 @@ src/background/background.ts      (service worker)
 - **Pure logic**: `src/intercept/resolveOutcome.ts` is the testable core — given a decode function,
   a score function, and a decision function, it returns `'allow' | 'proceed' | 'cancel'` with no
   Chrome APIs involved, so it's covered by ordinary Vitest unit tests.
-- **Graceful degradation & timeouts**: transactions with no single determinable destination (malformed XDR, no
-  destination-bearing operation, or multiple distinct destinations) resolve to `'allow'` — Gryd Lock
-  never blocks what it can't assess.
-- **Destination-bearing operations**: `payment`, `pathPaymentStrictSend`/`pathPaymentStrictReceive`,
-  `createAccount`, `createClaimableBalance`, and `claimClaimableBalance`. A `createClaimableBalance`
-  contributes one candidate destination per claimant, since any of them may later claim it; a
-  transaction with more than one claimant is a multiple-distinct-destination case and resolves to
-  `'allow'` like any other batch, pending the dedicated multi-destination scoring in #20.
-  `claimClaimableBalance` carries no destination account in the operation itself — only an opaque
-  balance ID — so the balance ID is scored in its place.
-- **Tests**: `src/decode/decodeTransaction.test.ts` and `src/intercept/resolveOutcome.test.ts` cover
-  the decode/scoring/decision logic directly; `src/adapter/oracleAdapter.test.ts` and
-  `src/lib/tiers.test.ts` cover the adapter stub and tier mapping; `src/popup/App.test.tsx` covers
-  both the popup's default (loading/error/retry/dev-slider) and intercept-mode rendering, against a
-  mocked adapter and a stubbed `chrome.runtime`, including the theme-aware tier accent variables
-  used by the popup.
+- **Fail-closed review**: malformed or over-limit XDR returns `cancel`; partial and opaque operations
+  are rendered as incomplete coverage and can never be presented as an unqualified low-risk review.
+  Static review never claims ledger-dependent effects.
+- **Typed targets**: account, contract, claimable-balance, and liquidity-pool identifiers retain the
+  exact network passphrase. Only account targets are projected to the legacy destination scorer.
+  In particular, a claimable-balance ID is local review data, never an account-oracle query.
+- **Tests**: `src/decode/transactionReview.test.ts`, `src/decode/sorobanSemantics.test.ts`, and
+  `src/intercept/resolveOutcome.test.ts` cover review construction, bounded Soroban analysis,
+  score projection, aggregation, malformed XDR, and decisions. Popup tests cover keyboard-accessible
+  review rendering and the worker-resident review data flow.
 
 ## Security
 

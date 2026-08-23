@@ -120,6 +120,15 @@ describe('App', () => {
     expect(screen.getByText(/elevated risk/i)).toBeInTheDocument()
     expect(screen.getByLabelText(/dev: override score/i)).toBeInTheDocument()
   })
+
+  it('renders the complete review preview without calling the adapter', () => {
+    const getScoreSpy = vi.spyOn(adapter, 'getScore')
+    window.history.pushState(null, '', '?preview=review')
+    render(<App />)
+    expect(screen.getByRole('alert')).toHaveTextContent(/account authority change/i)
+    expect(screen.getByText(/operations \(in signing order\)/i)).toBeInTheDocument()
+    expect(getScoreSpy).not.toHaveBeenCalled()
+  })
 })
 
 describe('App in intercept mode', () => {
@@ -151,6 +160,61 @@ describe('App in intercept mode', () => {
     // a11y check
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+
+  it('loads and renders worker-resident review data without placing it in the URL', async () => {
+    const review = {
+      severity: 'high' as const,
+      evidence: [],
+      findings: [
+        {
+          code: 'authority-change',
+          severity: 'high' as const,
+          title: 'Account authority change',
+          detail: 'Signer changed.',
+          operationIndex: 0,
+        },
+      ],
+      review: {
+        schemaVersion: 1 as const,
+        policyVersion: 1 as const,
+        networkPassphrase: 'Custom network',
+        xdrDigest: 'a'.repeat(64),
+        envelope: { type: 'transaction' as const, source: 'GSOURCE', operationCount: 1 },
+        operations: [
+          {
+            index: 0,
+            type: 'setOptions',
+            source: 'GSOURCE',
+            coverage: 'understood' as const,
+            summary: 'Change account options',
+            facts: [],
+            targets: [],
+            findings: [],
+          },
+        ],
+        findings: [],
+      },
+    }
+    vi.mocked(chrome.runtime.sendMessage).mockImplementation((message, callback) => {
+      if (
+        (message as { type?: string }).type === 'GET_REVIEW' &&
+        typeof callback === 'function'
+      ) {
+        callback({ review })
+      }
+    })
+    window.history.pushState(null, '', '?mode=intercept&requestId=req-review')
+
+    render(<App />)
+
+    expect(await screen.findByText('Custom network')).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent(/account authority change/i)
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(
+      { type: 'GET_REVIEW', requestId: 'req-review' },
+      expect.any(Function),
+    )
+    expect(window.location.search).not.toContain('digest')
   })
 
   it('sends the decision and closes on Proceed', () => {
