@@ -13,6 +13,8 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test --config=playwright.e2e.config.ts",
+    "test:contracts": "vitest run src/tests/walletContracts.test.ts",
+    "test:all": "vitest run && npm run test:contracts",
     "test:visual": "playwright test tests/visual --project=chromium",
     "lint": "eslint .",
     "format": "prettier --write .",
@@ -21,7 +23,8 @@
   "dependencies": {
     "@stellar/stellar-sdk": "^16.0.1",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
