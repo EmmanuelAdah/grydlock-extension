@@ -72,6 +72,24 @@ body {
   margin: 0 0 16px;
 }
 
+.review-summary {
+  max-height: 420px;
+  overflow: auto;
+  border-top: 1px solid var(--popup-border);
+  margin: 12px 0;
+  padding-top: 8px;
+  font-size: 12px;
+}
+
+.review-summary p { overflow-wrap: anywhere; }
+.review-summary h2 { font-size: 13px; margin: 10px 0 4px; }
+.digest { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; }
+.critical-findings, .incomplete { border-left: 3px solid var(--tier-accent); padding-left: 8px; }
+.operations { padding-left: 20px; }
+.operations details { margin: 6px 0; }
+.operations summary { cursor: pointer; font-weight: 600; overflow-wrap: anywhere; }
+.operations ul, .critical-findings ul { padding-left: 18px; }
+
 .confirmation-panel {
   margin: 0 0 16px;
   padding: 10px;

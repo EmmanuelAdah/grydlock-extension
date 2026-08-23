@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import type { CSSProperties, KeyboardEvent, ReactNode } from 'react'
 import type { TierInfo } from '../lib/tiers'
+import type { AggregatedReview } from '../review/model'
 
 interface DestinationRow {
   destination: string
@@ -15,6 +16,7 @@ interface TierWarningProps {
   onCancel: () => void
   onProceed: () => void
   devControl?: ReactNode
+  review?: AggregatedReview
 }
 
 const FOCUSABLE_SELECTOR = [
@@ -23,6 +25,7 @@ const FOCUSABLE_SELECTOR = [
   'input:not([disabled])',
   'select:not([disabled])',
   'textarea:not([disabled])',
+  'summary',
   '[tabindex]:not([tabindex="-1"])',
 ].join(',')
 
@@ -39,6 +42,7 @@ export default function TierWarning({
   onCancel,
   onProceed,
   devControl,
+  review,
 }: TierWarningProps) {
   const dialogRef = useRef<HTMLDivElement>(null)
   const cancelRef = useRef<HTMLButtonElement>(null)
@@ -120,6 +124,40 @@ export default function TierWarning({
         </span>{' '}
         {tier.label} risk
       </h1>
+      {review && (
+        <section className="review-summary" aria-label="Transaction review summary">
+          <p><strong>Network:</strong> {review.review.networkPassphrase}</p>
+          <p><strong>Envelope:</strong> {review.review.envelope.type} · {review.review.envelope.operationCount} operations</p>
+          <p className="digest"><strong>Transaction digest:</strong> {review.review.xdrDigest}</p>
+          {review.review.envelope.feeSource && <p><strong>Fee source:</strong> {review.review.envelope.feeSource}</p>}
+          {review.review.memo && <p><strong>{review.review.memo.label}:</strong> {review.review.memo.value}</p>}
+          {review.findings.length > 0 && (
+            <div className="critical-findings" role="alert" aria-label="Transaction review findings">
+              <h2>Important findings</h2>
+              <ul>
+                {review.findings.map((finding) => (
+                  <li key={`${finding.code}:${finding.operationIndex ?? 'envelope'}`}><strong>{finding.title}:</strong> {finding.detail}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <h2>Operations (in signing order)</h2>
+          <ol className="operations">
+            {review.review.operations.map((operation) => (
+              <li key={operation.index}>
+                <details>
+                  <summary>#{operation.index + 1} {operation.summary} — {operation.coverage}</summary>
+                  <p><strong>Source:</strong> {operation.source}</p>
+                  {operation.facts.length > 0 && <ul>{operation.facts.map((entry) => <li key={`${entry.label}:${entry.value}`}><strong>{entry.label}:</strong> {entry.value}</li>)}</ul>}
+                  {operation.targets.length > 0 && <p><strong>Targets:</strong> {operation.targets.map((target) => `${target.type}: ${target.value}`).join(', ')}</p>}
+                  {operation.findings.length > 0 && <ul>{operation.findings.map((finding) => <li key={`${finding.code}:${finding.title}`}><strong>{finding.title}:</strong> {finding.detail}</li>)}</ul>}
+                </details>
+              </li>
+            ))}
+          </ol>
+          {review.review.operations.some((operation) => operation.coverage !== 'understood') && <p className="incomplete" role="status">This review includes partial or opaque operations. They are not assessed as safe.</p>}
+        </section>
+      )}
       {destinations.length === 1 && <p className="destination">{destinations[0].destination}</p>}
       {destinations.length > 1 && (
         <ul className="destinations" aria-label="Transaction destinations">

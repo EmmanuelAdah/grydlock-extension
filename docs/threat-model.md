@@ -2,13 +2,13 @@
 
 - **Status:** Living document
 - **Applies to:** extension version `0.1.0` and current `main`
-- **Last reviewed:** 2026-07-18
+- **Last reviewed:** 2026-08-23
 
 This document describes the security properties of the current Freighter-first implementation. It separates intended guarantees from assumptions, known limitations, and hardening work that is still open.
 
 ## Executive summary
 
-Gryd Lock attempts to intercept a Freighter `SUBMIT_TRANSACTION` request before Freighter receives it, decode the unsigned Stellar transaction, extract one destination, obtain a risk score, and show the user a warning. The user can proceed or cancel. On proceed or an explicit `allow` outcome, the original request is re-posted for Freighter; on cancel, Gryd Lock synthesizes a rejection response.
+Gryd Lock attempts to intercept a Freighter `SUBMIT_TRANSACTION` request before Freighter receives it, build a bounded, versioned local review of the unsigned Stellar transaction, optionally obtain account-target risk evidence, and show the user a warning. Every parsed operation is represented as understood, partial, or opaque. The user can proceed or cancel. On proceed, the original request is re-posted for Freighter; malformed, over-limit, partial, and opaque inputs are never silently shown as green.
 
 The extension is an advisory layer, not a wallet, signer, transaction firewall, oracle, antivirus product, or guarantee that a destination is safe. It does not hold private keys and cannot secure a compromised wallet, browser, operating system, dApp, or risk-data source.
 
@@ -21,10 +21,10 @@ Gryd Lock aims to preserve the following properties:
 1. **Review-before-signing:** when interception succeeds, the warning is displayed before the intercepted request is passed to Freighter.
 2. **Request integrity:** proceeding should re-dispatch the original wallet request without changing its XDR, wallet fields, or message identifier, apart from Gryd Lock's internal reviewed marker.
 3. **Cancellation integrity:** a user-selected cancel outcome should prevent the intercepted request from being forwarded to Freighter.
-4. **Display integrity:** the destination, asset, score, and tier shown to the user should correspond to the same pending request that will be released or cancelled.
+4. **Display integrity:** the network-bound XDR digest, envelope, ordered operations, static facts, findings, evidence, and tier shown to the user should correspond to the same pending request that will be released or cancelled.
 5. **Decision binding:** a proceed/cancel decision should resolve only the request whose review popup produced that decision.
 6. **No key custody:** Gryd Lock should never request, receive, store, or transmit wallet seed phrases or private signing keys.
-7. **Predictable degradation:** unsupported or indeterminate transactions should not be silently misrepresented as low risk. The current product choice is to return `allow` when no single destination can be determined.
+7. **Predictable degradation:** malformed, unsupported, opaque, or indeterminate transaction semantics should not be silently misrepresented as low risk. The current product choice is to present a bounded incomplete review or cancel when no safe bounded review can be built.
 8. **Finite interruption:** failures in decoding, scoring, popup handling, or MV3 lifecycle should not hang the dApp's signing request indefinitely.
 9. **Least privilege:** injected scripts, host access, extension pages, and dependencies should be limited to what the review flow requires.
 
@@ -44,9 +44,8 @@ Not every objective is fully enforced by the current code. The risk register bel
 ### Sensitive data handled
 
 - unsigned transaction XDR;
-- extracted destination address and optional asset label;
-- network metadata when available in the wallet request;
-- risk score and tier;
+- local review facts: network-bound digest, envelope sources, memo, amounts, assets, paths, typed targets, and semantic findings;
+- optional account-target risk evidence and aggregated tier;
 - per-request identifiers and user decisions.
 
 The current stub score is computed locally. A future network-backed oracle may learn the destination address and request timing unless a privacy-preserving design is introduced and documented.
@@ -65,8 +64,8 @@ The current stub score is computed locally. A future network-backed oracle may l
 - **Freighter:** owns signing authorization and private keys. Gryd Lock assumes the installed wallet behaves according to its protocol.
 - **MAIN-world interceptor:** page-context script that observes Freighter request messages and can stop propagation.
 - **Isolated-world bridge:** content script with `chrome.runtime` access that relays messages between the page and extension.
-- **MV3 background service worker:** decodes XDR, obtains scores, tracks pending decisions, and opens review windows.
-- **Warning popup:** displays review data and sends the user's decision.
+- **MV3 background service worker:** builds bounded reviews, obtains account-target evidence, tracks pending decisions, and opens review windows.
+- **Warning popup:** retrieves worker-resident review data by request ID and sends the user's decision.
 - **Oracle adapter:** currently a deterministic local stub; a future implementation will be an external trust and availability dependency.
 - **Browser and extension platform:** enforces isolation, permissions, extension URLs, runtime messaging, and service-worker lifecycle.
 
@@ -90,9 +89,9 @@ Current messages are not cryptographically authenticated or bound to an isolated
 
 ### Boundary 4: background service worker → warning popup
 
-The background worker creates an extension popup URL containing `requestId`, destination, asset, and score as query parameters. React renders the values and sends a `DECISION_MADE` runtime message.
+The background worker creates an extension popup URL containing only `mode=intercept` and an opaque `requestId`. The popup requests the worker-resident review over extension runtime messaging. React renders it as text and sends a `DECISION_MADE` runtime message.
 
-React's default escaping reduces direct HTML injection risk, but URL length, character set, request authenticity, stale popup, and decision-binding risks remain. Input bounding is tracked in issue `#9`; an explicit extension-page CSP is tracked in issue `#6`.
+React's default escaping reduces direct HTML injection risk. XDR, memos, amounts, sources, targets, scores, and findings are absent from the URL; bounded rendering limits apply to XDR, operations, facts, rendered values, and Soroban authorization traversal. Request authenticity, stale popup, and decision-binding risks remain.
 
 ### Boundary 5: background service worker → oracle adapter
 
@@ -108,8 +107,8 @@ Gryd Lock assumes Freighter signs the transaction the user and dApp expect. A co
 
 When all dependencies and assumptions hold, Gryd Lock is intended to help with:
 
-- a dApp asking Freighter to sign a transaction with one detectable destination;
-- presenting destination-based risk context before the request is released to Freighter;
+- a dApp asking Freighter to sign a transaction whose XDR can be boundedly decoded;
+- presenting complete static transaction semantics and optional account-target risk context before the request is released to Freighter;
 - helping a user notice a known or suspected fraudulent destination;
 - allowing the user to stop the intercepted request before Freighter receives it;
 - preserving the original request when the user proceeds;
@@ -127,11 +126,9 @@ Gryd Lock does not currently protect against:
 - a user disabling, uninstalling, bypassing, or knowingly overriding the extension;
 - unsupported wallets and signing flows that do not use the recognized Freighter message protocol;
 - inaccurate, stale, manipulated, unavailable, or incomplete oracle data;
-- destination risks that are not visible from the extracted destination address;
+- dynamic ledger effects, live Soroban simulation, or application behaviour that cannot be proven from XDR alone;
 - social engineering, malicious memo text, deceptive asset branding, or contract/application behavior that destination scoring does not model;
-- transactions with no supported destination-bearing operation or with multiple distinct destinations; the current implementation returns `allow`;
-- transaction semantics not represented in the warning, including operation ordering, amounts, authorization changes, trustlines, sponsorship, or path details;
-- mainnet/testnet confusion until network metadata is carried through the full pipeline as tracked in issue `#10`;
+- a review proving an XDR's runtime ledger effects, balances, trustlines, offer state, contract execution, or submission outcome;
 - silent failure, hangs, or state loss caused by open lifecycle and timeout issues described below;
 - confidentiality from scripts already executing in the same page context; the page can observe page-level traffic and the current internal `postMessage` exchange;
 - financial recovery or transaction reversal after a user or wallet signs and submits a transaction.
@@ -149,22 +146,22 @@ Gryd Lock does not currently protect against:
 
 ## Threat and risk register
 
-| Threat | Current control | Residual risk / planned mitigation |
-| --- | --- | --- |
-| Page script forges or races internal messages | Message type checks, `event.source === window`, random request ID | Same-page scripts share `window`; add origin policy and isolated session binding (`#1`, `#4`). |
-| Freighter receives request before Gryd Lock | MAIN-world listener uses capture mode at `document_start` and stops immediate propagation | Chrome does not guarantee cross-extension order; add runtime self-test and degraded-protection warning (`#8`). |
-| User closes review popup | Decision map waits for `DECISION_MADE` | Request may hang forever; handle window removal and timeout (`#2`). |
-| MV3 worker terminates during review | None beyond browser runtime behavior | In-memory resolver is lost; persist recoverable metadata and fail safely (`#3`). |
-| Malicious dApp floods signing requests | Each request receives a random ID and separate popup | Unbounded windows and map growth permit client-side denial of service; add queue and concurrency limits (`#7`). |
-| Malformed or adversarial XDR crashes or confuses decoding | SDK parser, null outcome, unit tests | Expand defensive parsing and fuzz/property tests (`#23`). |
-| Wrong Stellar network used for decoding | Decoder currently defaults to testnet | Carry and validate network/passphrase through the protocol (`#10`). |
-| Attacker-controlled destination/asset breaks popup or URL | `URLSearchParams` encoding and React escaping | Add length/character bounds and explicit extension CSP (`#9`, `#6`). |
-| Overbroad page access increases attack surface | MV3 isolation | Scripts and host permission currently use `<all_urls>`; reduce or justify access (`#5`). |
-| Oracle stalls signing | Current local stub resolves quickly | Remote adapter needs cancellation, timeout, and explicit fallback (`#12`). |
-| Oracle gives a wrong or malicious score | Tier mapping displays supplied score | Authenticate source, define freshness/provenance, monitor quality, and never describe score as a guarantee. |
-| Dependency or build compromise | Lockfile, lint/type/test/build CI | Automate dependency updates and keep CI-gated review (`#46`); protect release credentials and provenance. |
-| Popup or decision is not bound to the originating tab/frame/request | Request ID map | Add sender/tab/frame validation, session binding, stale-popup rejection, and one-shot decision semantics. |
-| User sees false assurance while extension is inactive | README documents limitations | Add runtime health/self-test UI and explicit degraded states (`#8`). |
+| Threat                                                                | Current control                                                                                                                                         | Residual risk / planned mitigation                                                                               |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Page script forges or races internal messages                         | Message type checks, `event.source === window`, random request ID                                                                                       | Same-page scripts share `window`; add origin policy and isolated session binding (`#1`, `#4`).                   |
+| Freighter receives request before Gryd Lock                           | MAIN-world listener uses capture mode at `document_start` and stops immediate propagation                                                               | Chrome does not guarantee cross-extension order; add runtime self-test and degraded-protection warning (`#8`).   |
+| User closes review popup                                              | Decision map waits for `DECISION_MADE`                                                                                                                  | Request may hang forever; handle window removal and timeout (`#2`).                                              |
+| MV3 worker terminates during review                                   | None beyond browser runtime behavior                                                                                                                    | In-memory resolver is lost; persist recoverable metadata and fail safely (`#3`).                                 |
+| Malicious dApp floods signing requests                                | Each request receives a random ID and separate popup                                                                                                    | Unbounded windows and map growth permit client-side denial of service; add queue and concurrency limits (`#7`).  |
+| Malformed or adversarial XDR crashes, hangs, or becomes green         | Bounded XDR/operation/fact/Soroban traversal parsing; malformed or over-limit review cancels; fuzz/property tests                                       | SDK parser and static review still cannot prove runtime effects.                                                 |
+| Wrong Stellar network used for decoding                               | The incoming alias or custom passphrase is resolved once, retained in every typed target and the displayed review, and used in the network-bound digest | The extension relies on the wallet/dApp-supplied passphrase; it cannot independently prove the intended network. |
+| Attacker-controlled review data exhausts popup or leaks through a URL | Worker-only review storage, request-ID-only popup URL, control-character stripping, and display bounds                                                  | Request authenticity and stale-popup binding remain open risks.                                                  |
+| Overbroad page access increases attack surface                        | MV3 isolation                                                                                                                                           | Scripts and host permission currently use `<all_urls>`; reduce or justify access (`#5`).                         |
+| Oracle stalls signing                                                 | Current local stub resolves quickly                                                                                                                     | Remote adapter needs cancellation, timeout, and explicit fallback (`#12`).                                       |
+| Oracle gives a wrong or malicious score                               | Tier mapping displays supplied score                                                                                                                    | Authenticate source, define freshness/provenance, monitor quality, and never describe score as a guarantee.      |
+| Dependency or build compromise                                        | Lockfile, lint/type/test/build CI                                                                                                                       | Automate dependency updates and keep CI-gated review (`#46`); protect release credentials and provenance.        |
+| Popup or decision is not bound to the originating tab/frame/request   | Request ID map                                                                                                                                          | Add sender/tab/frame validation, session binding, stale-popup rejection, and one-shot decision semantics.        |
+| User sees false assurance while extension is inactive                 | README documents limitations                                                                                                                            | Add runtime health/self-test UI and explicit degraded states (`#8`).                                             |
 
 Issue references identify planned work; they are not evidence that the mitigation is already deployed.
 
@@ -172,13 +169,13 @@ Issue references identify planned work; they are not evidence that the mitigatio
 
 ### Current build
 
-The intercepted unsigned XDR, destination, asset label, score, request ID, and decision remain inside the page/extension/browser process. The local score stub does not send the destination to a server.
+The intercepted unsigned XDR and all review facts remain inside the extension/browser process. The popup URL contains only an opaque request ID; it never contains XDR, sources, memo, amounts, targets, contract IDs, claimable-balance IDs, findings, or scores. The local score stub does not send an account target to a server.
 
 However:
 
 - Gryd Lock injects scripts on all matched pages under the current manifest;
 - the MAIN-world and internal page message traffic is visible to scripts on the same page;
-- destination, asset, score, and request ID are placed in an extension popup URL;
+- the page-visible MAIN-world protocol still carries XDR to the isolated bridge before it reaches the extension;
 - browser debugging, crash reporting, other privileged extensions, or local malware may expose this data.
 
 ### Future oracle integration

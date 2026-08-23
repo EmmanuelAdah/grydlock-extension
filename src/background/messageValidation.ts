@@ -4,6 +4,7 @@ import type {
   RuntimeProtectionBridgeOnlineMessage,
   RuntimeProtectionHandshakeAckMessage,
   RuntimeProtectionHandshakeMessage,
+  RuntimeReviewRequestMessage,
   RuntimeSignRequestMessage,
 } from '../intercept/protocol'
 import { PROTECTION_PROTOCOL_VERSION } from '../protection/protectionState'
@@ -64,6 +65,18 @@ export function isRuntimeDecisionMadeMessage(
     message.type === 'DECISION_MADE' &&
     isNonEmptyBoundedString(message.requestId, MAX_REQUEST_ID_LENGTH) &&
     (message.decision === 'proceed' || message.decision === 'cancel')
+  )
+}
+
+/** Validate the popup's bounded request for worker-resident review data. */
+export function isRuntimeReviewRequestMessage(
+  message: unknown,
+): message is RuntimeReviewRequestMessage {
+  return (
+    isRecord(message) &&
+    hasOnlyKeys(message, ['type', 'requestId']) &&
+    message.type === 'GET_REVIEW' &&
+    isNonEmptyBoundedString(message.requestId, MAX_REQUEST_ID_LENGTH)
   )
 }
 

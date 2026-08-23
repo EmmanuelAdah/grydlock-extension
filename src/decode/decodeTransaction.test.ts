@@ -118,11 +118,9 @@ describe('extractDestination', () => {
     ])
   })
 
-  it('uses claimClaimableBalance IDs as scoreable destinations', () => {
+  it('does not treat claimClaimableBalance IDs as scoreable account destinations', () => {
     const xdr = buildXdr([Operation.claimClaimableBalance({ balanceId: BALANCE_ID })])
-    expect(extractDestination(xdr, Networks.TESTNET)?.destinations).toEqual([
-      { destination: BALANCE_ID, asset: undefined },
-    ])
+    expect(extractDestination(xdr, Networks.TESTNET)).toBeNull()
   })
 
   it('extracts text memos', () => {

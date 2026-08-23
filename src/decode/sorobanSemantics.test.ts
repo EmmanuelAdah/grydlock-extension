@@ -241,6 +241,29 @@ describe('extractSorobanSemantics', () => {
     expect(semantics.warnings).toContain('long-lived-approval')
   })
 
+  it('distinguishes delegated spend from approval findings', () => {
+    const xdrString = buildXdr([
+      call(
+        USDC_CONTRACT,
+        'transfer_from',
+        new Address(RECIPIENT).toScVal(),
+        new Address(HOLDER).toScVal(),
+        new Address(SOURCE).toScVal(),
+        i128(1n),
+      ),
+    ])
+
+    const [semantics] = extractSorobanSemantics(xdrString, options)
+    expect(semantics.movements[0]).toMatchObject({
+      kind: 'transfer',
+      spender: RECIPIENT,
+      from: HOLDER,
+      to: SOURCE,
+    })
+    expect(semantics.warnings).toContain('delegated-spend')
+    expect(semantics.warnings).not.toContain('unbounded-approval')
+  })
+
   it('does not flag a bounded, short-lived approval', () => {
     const xdrString = buildXdr([
       call(
@@ -321,6 +344,21 @@ describe('extractSorobanSemantics', () => {
     expect(semantics.warnings).toContain('deep-authorization-tree')
     expect(semantics.authorizations[0].depth).toBe(5)
     expect(semantics.authorizations[0].invocations).toHaveLength(4)
+  })
+
+  it('bounds wide authorisation trees and reports an explicit truncation finding', () => {
+    const children = Array.from({ length: 80 }, (_, index) =>
+      authInvocation(CUSTOM_CONTRACT, `child_${index}`),
+    )
+    const root = authInvocation(CUSTOM_CONTRACT, 'root', [], children)
+    const xdrString = buildXdr([
+      invokeWithAuth(hostFn(CUSTOM_CONTRACT, 'root'), [sourceAuth(root)]),
+    ])
+
+    const [semantics] = extractSorobanSemantics(xdrString, options)
+
+    expect(semantics.warnings).toContain('authorization-truncated')
+    expect(semantics.authorizations[0].invocations).toHaveLength(64)
   })
 
   it('identifies the asset behind a Stellar asset contract deployment', () => {
