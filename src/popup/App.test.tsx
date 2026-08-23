@@ -120,6 +120,15 @@ describe('App', () => {
     expect(screen.getByText(/elevated risk/i)).toBeInTheDocument()
     expect(screen.getByLabelText(/dev: override score/i)).toBeInTheDocument()
   })
+
+  it('renders the complete review preview without calling the adapter', () => {
+    const getScoreSpy = vi.spyOn(adapter, 'getScore')
+    window.history.pushState(null, '', '?preview=review')
+    render(<App />)
+    expect(screen.getByRole('alert')).toHaveTextContent(/account authority change/i)
+    expect(screen.getByText(/operations \(in signing order\)/i)).toBeInTheDocument()
+    expect(getScoreSpy).not.toHaveBeenCalled()
+  })
 })
 
 describe('App in intercept mode', () => {

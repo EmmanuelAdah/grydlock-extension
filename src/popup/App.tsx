@@ -14,12 +14,71 @@ const PLACEHOLDER_DESTINATION = 'GABCDEXAMPLE00000000000000000000000000000000000
 const PREVIEW_DESTINATION = 'GDRWZV7XVISUALREGRESSIONDESTINATION0000000000000000000'
 
 type LoadState = { status: 'loading' } | { status: 'error' } | { status: 'ready'; score: number }
-type PreviewState = 'loading' | 'error' | 'low' | 'elevated' | 'high' | 'critical' | 'dev-slider'
+type PreviewState =
+  | 'loading'
+  | 'error'
+  | 'low'
+  | 'elevated'
+  | 'high'
+  | 'critical'
+  | 'dev-slider'
+  | 'review'
 
 interface DestinationRow {
   destination: string
   asset?: string
   score: number
+}
+
+const REVIEW_PREVIEW: AggregatedReview = {
+  severity: 'high',
+  evidence: [],
+  findings: [
+    {
+      code: 'authority-change',
+      severity: 'high',
+      title: 'Account authority change',
+      detail: 'Signer, threshold, flag, or account-option changes can alter future authorization.',
+      operationIndex: 0,
+    },
+    {
+      code: 'incomplete-coverage',
+      severity: 'warning',
+      title: 'Some transaction effects are not fully understood',
+      detail: 'Review every partial or opaque operation before proceeding.',
+      operationIndex: 1,
+    },
+  ],
+  review: {
+    schemaVersion: 1,
+    policyVersion: 1,
+    networkPassphrase: 'Test SDF Network ; September 2015',
+    xdrDigest: 'a'.repeat(64),
+    envelope: { type: 'fee-bump', source: PREVIEW_DESTINATION, feeSource: PREVIEW_DESTINATION, operationCount: 2 },
+    operations: [
+      {
+        index: 0,
+        type: 'setOptions',
+        source: PREVIEW_DESTINATION,
+        coverage: 'understood',
+        summary: 'Change account options',
+        facts: [{ label: 'Signer', value: PREVIEW_DESTINATION, provenance: 'xdr' }],
+        targets: [],
+        findings: [],
+      },
+      {
+        index: 1,
+        type: 'invokeHostFunction',
+        source: PREVIEW_DESTINATION,
+        coverage: 'opaque',
+        summary: 'Soroban invocation',
+        facts: [],
+        targets: [],
+        findings: [],
+      },
+    ],
+    findings: [],
+  },
 }
 
 export default function App() {
@@ -50,6 +109,18 @@ function PreviewView({ preview }: { preview: PreviewState }) {
           Retry
         </button>
       </div>
+    )
+  }
+
+  if (preview === 'review') {
+    return (
+      <TierWarning
+        tier={tierForScore(60)}
+        score={60}
+        review={REVIEW_PREVIEW}
+        onCancel={() => {}}
+        onProceed={() => {}}
+      />
     )
   }
 
