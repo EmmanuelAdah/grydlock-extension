@@ -2,7 +2,7 @@ import type { Decision, Outcome } from './protocol'
 import type { DecodedBatch, DecodedDestination } from '../decode/decodeTransaction'
 import { extractTransactionReview, scoreableTargets } from '../decode/transactionReview'
 import { aggregateReview } from '../review/policy'
-import type { AggregatedReview, TargetEvidence } from '../review/model'
+import type { AggregatedReview, ReviewTarget, TargetEvidence } from '../review/model'
 
 export interface ResolveOutcomeDeps {
   extractDestination: (xdr: string, networkPassphrase?: string) => DecodedBatch | null
@@ -16,7 +16,11 @@ export interface ResolveOutcomeDeps {
 
 export interface ResolveReviewOutcomeDeps {
   extractReview?: typeof extractTransactionReview
-  getScore: (destination: string) => Promise<number>
+  /**
+   * The review boundary keeps score requests network-scoped and typed. The
+   * adapter may project only approved account targets to its legacy API.
+   */
+  getScore: (target: ReviewTarget) => Promise<number>
   requestDecision: (review: AggregatedReview) => Promise<Decision>
 }
 
@@ -33,16 +37,18 @@ export async function resolveReviewOutcome(
   const review = (deps.extractReview ?? extractTransactionReview)(xdr, networkPassphrase)
   if (!review) return 'cancel'
 
-  const evidence: TargetEvidence[] = await Promise.all(scoreableTargets(review).map(async (target) => {
-    try {
-      const score = await deps.getScore(target.value)
-      return Number.isFinite(score) && Number.isInteger(score) && score >= 0 && score <= 100
-        ? { target, score, status: 'available' as const }
-        : { target, status: 'unavailable' as const }
-    } catch {
-      return { target, status: 'unavailable' as const }
-    }
-  }))
+  const evidence: TargetEvidence[] = await Promise.all(
+    scoreableTargets(review).map(async (target) => {
+      try {
+        const score = await deps.getScore(target)
+        return Number.isFinite(score) && Number.isInteger(score) && score >= 0 && score <= 100
+          ? { target, score, status: 'available' as const }
+          : { target, status: 'unavailable' as const }
+      } catch {
+        return { target, status: 'unavailable' as const }
+      }
+    }),
+  )
 
   return deps.requestDecision(aggregateReview(review, evidence))
 }
@@ -90,7 +96,11 @@ export async function resolveOutcome(
     }),
   )
 
-  const worst = scores.reduce((acc, item) => (tierOrder(tierForScore(item.score)) > tierOrder(tierForScore(acc.score)) ? item : acc), scores[0])
+  const worst = scores.reduce(
+    (acc, item) =>
+      tierOrder(tierForScore(item.score)) > tierOrder(tierForScore(acc.score)) ? item : acc,
+    scores[0],
+  )
 
   return deps.requestDecision({
     destinations: decoded.destinations,

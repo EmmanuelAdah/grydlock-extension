@@ -13,6 +13,12 @@ export type TargetType = 'account' | 'contract' | 'claimable-balance' | 'liquidi
 export interface ReviewTarget {
   type: TargetType
   value: string
+  /**
+   * Exact passphrase that scopes this identifier. Account and contract
+   * strings are not meaningful enough on their own to cross a network
+   * boundary.
+   */
+  networkPassphrase: string
   /** Human-readable asset identity, never used as an oracle target. */
   asset?: string
 }
@@ -86,7 +92,8 @@ export const severityRank: Record<ReviewSeverity, number> = {
 
 export function mostSevere(findings: readonly ReviewFinding[]): ReviewSeverity {
   return findings.reduce<ReviewSeverity>(
-    (current, finding) => (severityRank[finding.severity] > severityRank[current] ? finding.severity : current),
+    (current, finding) =>
+      severityRank[finding.severity] > severityRank[current] ? finding.severity : current,
     'info',
   )
 }

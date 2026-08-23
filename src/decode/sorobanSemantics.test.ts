@@ -346,6 +346,21 @@ describe('extractSorobanSemantics', () => {
     expect(semantics.authorizations[0].invocations).toHaveLength(4)
   })
 
+  it('bounds wide authorisation trees and reports an explicit truncation finding', () => {
+    const children = Array.from({ length: 80 }, (_, index) =>
+      authInvocation(CUSTOM_CONTRACT, `child_${index}`),
+    )
+    const root = authInvocation(CUSTOM_CONTRACT, 'root', [], children)
+    const xdrString = buildXdr([
+      invokeWithAuth(hostFn(CUSTOM_CONTRACT, 'root'), [sourceAuth(root)]),
+    ])
+
+    const [semantics] = extractSorobanSemantics(xdrString, options)
+
+    expect(semantics.warnings).toContain('authorization-truncated')
+    expect(semantics.authorizations[0].invocations).toHaveLength(64)
+  })
+
   it('identifies the asset behind a Stellar asset contract deployment', () => {
     const xdrString = buildXdr([Operation.createStellarAssetContract({ asset: USDC })])
 

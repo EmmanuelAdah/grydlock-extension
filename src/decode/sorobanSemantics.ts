@@ -49,6 +49,7 @@ export type SorobanWarningCode =
   | 'hidden-authorization'
   | 'foreign-authorization'
   | 'deep-authorization-tree'
+  | 'authorization-truncated'
   | 'opaque-payload'
 
 export interface SorobanArgument {
@@ -133,6 +134,10 @@ const MAX_DISPLAY_LENGTH = 64
 
 /** Authorisation trees deeper than this are flagged rather than fully rendered. */
 const MAX_AUTH_DEPTH = 4
+
+/** Bound both breadth and storage across all authorisation entries in an operation. */
+const MAX_AUTHORIZATIONS = 16
+const MAX_AUTH_INVOCATIONS = 64
 
 /** An `i128` approval at or above this is effectively an unlimited allowance. */
 const UNBOUNDED_APPROVAL_THRESHOLD = 2n ** 100n
@@ -260,7 +265,14 @@ function flattenAuthorizedInvocation(
   node: xdr.SorobanAuthorizedInvocation,
   depth: number,
   acc: SorobanInvocation[],
+  traversal: { remaining: number; truncated: boolean },
 ): number {
+  if (traversal.remaining === 0) {
+    traversal.truncated = true
+    return depth
+  }
+  traversal.remaining -= 1
+
   const fn = node.function()
   if (fn.switch() === xdr.SorobanAuthorizedFunctionType.sorobanAuthorizedFunctionTypeContractFn()) {
     const invocation = invocationFromArgs(fn.contractFn())
@@ -270,7 +282,12 @@ function flattenAuthorizedInvocation(
   let maxDepth = depth
   if (depth < MAX_AUTH_DEPTH) {
     for (const child of node.subInvocations()) {
-      maxDepth = Math.max(maxDepth, flattenAuthorizedInvocation(child, depth + 1, acc))
+      if (traversal.remaining === 0) {
+        traversal.truncated = true
+        maxDepth = Math.max(maxDepth, depth + 1)
+        break
+      }
+      maxDepth = Math.max(maxDepth, flattenAuthorizedInvocation(child, depth + 1, acc, traversal))
     }
   } else if (node.subInvocations().length > 0) {
     // Stop walking rather than let a crafted tree drive unbounded recursion;
@@ -281,9 +298,12 @@ function flattenAuthorizedInvocation(
   return maxDepth
 }
 
-function describeAuthorization(entry: xdr.SorobanAuthorizationEntry): SorobanAuthorization {
+function describeAuthorization(
+  entry: xdr.SorobanAuthorizationEntry,
+  traversal: { remaining: number; truncated: boolean },
+): SorobanAuthorization {
   const invocations: SorobanInvocation[] = []
-  const depth = flattenAuthorizedInvocation(entry.rootInvocation(), 1, invocations)
+  const depth = flattenAuthorizedInvocation(entry.rootInvocation(), 1, invocations, traversal)
   const credentials = entry.credentials()
 
   if (credentials.switch() === xdr.SorobanCredentialsType.sorobanCredentialsAddress()) {
@@ -490,15 +510,20 @@ export function extractOperationSemantics(
   options: SorobanDecodeOptions = {},
 ): SorobanSemantics {
   const warnings = new Set<SorobanWarningCode>()
+  const traversal = { remaining: MAX_AUTH_INVOCATIONS, truncated: false }
+  const boundedAuth = auth.slice(0, MAX_AUTHORIZATIONS)
+  if (auth.length > boundedAuth.length) warnings.add('authorization-truncated')
   const semantics: SorobanSemantics = {
     kind: 'unsupported',
     confidence: 'opaque',
-    authorizations: auth.map(describeAuthorization),
+    authorizations: boundedAuth.map((entry) => describeAuthorization(entry, traversal)),
     accounts: [],
     contracts: [],
     movements: [],
     warnings: [],
   }
+
+  if (traversal.truncated) warnings.add('authorization-truncated')
 
   switch (func.switch()) {
     case xdr.HostFunctionType.hostFunctionTypeInvokeContract():

@@ -25,11 +25,11 @@ This cannot represent operation order, typed identifiers, authorization findings
 
 ### Option B: Versioned canonical local review model
 
-Parse one bounded review object containing envelope identity, facts, typed targets, coverage, and findings; collect oracle evidence separately; aggregate it by one policy.
+Parse one bounded review object containing envelope identity, facts, network-scoped typed targets, coverage, and findings; collect oracle evidence separately; aggregate it by one policy.
 
 ## Decision
 
-Use option B. `TransactionReview` is schema and policy versioned. Each parsed operation is `understood`, `partial`, or `opaque`; partial and opaque coverage generates a visible warning. The model retains only static XDR facts and labels ledger-dependent effects as not verified. Only `account` targets may be passed to the legacy destination scorer; claimable-balance, contract, and liquidity-pool identifiers remain typed local review data.
+Use option B. `TransactionReview` is schema and policy versioned. Each parsed operation is `understood`, `partial`, or `opaque`; partial and opaque coverage generates a visible warning. The model retains only static XDR facts and labels ledger-dependent effects as not verified. Every target is scoped to the exact network passphrase. Only `account` targets may be passed to the legacy destination scorer; claimable-balance, contract, and liquidity-pool identifiers remain typed local review data.
 
 The background worker stores the aggregated review against the existing request ID. The popup receives only the request ID in its URL and retrieves review data from the worker, then displays the exact network, SDK transaction digest, envelope/fee source, memo, findings, and expandable ordered operation details.
 
@@ -41,7 +41,7 @@ The background worker stores the aggregated review against the existing request 
 
 ## Security and privacy considerations
 
-XDR, amounts, memos, sources, and review findings remain in local extension memory and are removed from popup URL query parameters. Bounds apply to XDR size, operation count, facts, displayed values, and Soroban authorization traversal. The digest is network-bound and binds displayed information to the parsed envelope.
+XDR, amounts, memos, sources, and review findings remain in local extension memory and are removed from popup URL query parameters. Bounds apply to XDR size, operation count, facts, displayed values, plus Soroban authorization depth, breadth, and entry count. The digest is network-bound and binds displayed information to the parsed envelope.
 
 ## Validation
 

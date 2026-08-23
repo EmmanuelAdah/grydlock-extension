@@ -1,4 +1,4 @@
-import { FeeBumpTransaction, Networks, TransactionBuilder } from '@stellar/stellar-sdk'
+import { FeeBumpTransaction, TransactionBuilder } from '@stellar/stellar-sdk'
 import type { Asset, OperationRecord, Transaction } from '@stellar/stellar-sdk'
 import { extractOperationSemantics } from './sorobanSemantics'
 import { resolveNetworkPassphrase } from './decodeTransaction'
@@ -11,6 +11,11 @@ import {
   type ReviewTarget,
   type TransactionReview,
 } from '../review/model'
+
+type UnscopedReviewTarget = Omit<ReviewTarget, 'networkPassphrase'>
+type ReviewOperationDraft = Omit<ReviewOperation, 'targets'> & {
+  targets: UnscopedReviewTarget[]
+}
 
 /** Exact operation discriminants in @stellar/stellar-sdk 16.0.1. */
 export const PINNED_SDK_OPERATION_TYPES = [
@@ -66,15 +71,15 @@ function assetFromUnknown(value: unknown): string {
   return clean(value)
 }
 
-function account(value: string, asset?: string): ReviewTarget {
+function account(value: string, asset?: string): UnscopedReviewTarget {
   return { type: 'account', value: clean(value), asset }
 }
 
-function balance(value: string): ReviewTarget {
+function balance(value: string): UnscopedReviewTarget {
   return { type: 'claimable-balance', value: clean(value) }
 }
 
-function pool(value: string): ReviewTarget {
+function pool(value: string): UnscopedReviewTarget {
   return { type: 'liquidity-pool', value: clean(value) }
 }
 
@@ -91,7 +96,7 @@ function stateLimitation(operationIndex: number): ReviewFinding {
 }
 
 function addSoroban(
-  operation: ReviewOperation,
+  operation: ReviewOperationDraft,
   raw: Extract<OperationRecord, { type: 'invokeHostFunction' }>,
   networkPassphrase: string,
 ) {
@@ -121,6 +126,32 @@ function addSoroban(
   } else {
     operation.summary = `Soroban ${semantics.kind}`
   }
+  if (semantics.kind === 'createContract') {
+    operation.summary = semantics.createdAsset
+      ? 'Deploy Stellar asset contract'
+      : 'Deploy Soroban contract'
+    if (semantics.createdAsset) {
+      operation.facts.push(fact('Created asset', semantics.createdAsset, 'static-inference'))
+    }
+    operation.findings.push({
+      code: 'soroban-contract-deployment', severity: 'high', operationIndex: operation.index,
+      title: 'Soroban contract deployment',
+      detail: 'This static review cannot verify the deployed contract code or its future behaviour.',
+    })
+  } else if (semantics.kind === 'uploadWasm') {
+    operation.summary = 'Upload Soroban contract code'
+    operation.findings.push({
+      code: 'soroban-contract-code-upload', severity: 'high', operationIndex: operation.index,
+      title: 'Soroban contract code upload',
+      detail: 'The code payload is opaque to static review and is not treated as safe.',
+    })
+  } else if (semantics.invocation && /(?:upgrade|update.*wasm)/i.test(semantics.invocation.functionName)) {
+    operation.findings.push({
+      code: 'soroban-contract-upgrade', severity: 'high', operationIndex: operation.index,
+      title: 'Soroban contract upgrade invocation',
+      detail: 'The invocation name indicates a possible code upgrade; static review cannot verify its effects.',
+    })
+  }
   for (const warning of semantics.warnings) {
     const severity = warning === 'unbounded-approval' || warning === 'token-admin-operation' || warning === 'foreign-authorization'
       ? 'high' as const : 'warning' as const
@@ -136,7 +167,7 @@ function reviewOperation(
   transaction: Transaction,
   networkPassphrase: string,
 ): ReviewOperation {
-  const operation: ReviewOperation = {
+  const operation: ReviewOperationDraft = {
     index, type: raw.type, source: clean(sourceFor(raw, transaction)), coverage: 'understood',
     summary: raw.type, facts: [fact('Source', sourceFor(raw, transaction))], targets: [], findings: [],
   }
@@ -196,8 +227,19 @@ function reviewOperation(
       operation.findings.push({ code: 'unsupported-operation', severity: 'warning', operationIndex: index, title: 'Unsupported operation', detail: 'This SDK operation is retained as opaque and cannot be treated as safe.' })
     }
   }
-  operation.facts = operation.facts.slice(0, MAX_FACTS_PER_OPERATION)
-  return operation
+  if (operation.facts.length > MAX_FACTS_PER_OPERATION) {
+    operation.facts = operation.facts.slice(0, MAX_FACTS_PER_OPERATION)
+    if (operation.coverage !== 'opaque') operation.coverage = 'partial'
+    operation.findings.push({
+      code: 'facts-truncated', severity: 'warning', operationIndex: index,
+      title: 'Operation details were truncated',
+      detail: 'The operation contained more displayable facts than the bounded review can retain.',
+    })
+  }
+  return {
+    ...operation,
+    targets: operation.targets.map((target) => ({ ...target, networkPassphrase })),
+  }
 }
 
 function memoFor(transaction: Transaction): ReviewFact | undefined {
@@ -213,8 +255,11 @@ function hex(bytes: Uint8Array): string {
   return Array.from(bytes).map((byte) => byte.toString(16).padStart(2, '0')).join('')
 }
 
-export function extractTransactionReview(xdr: string, networkPassphrase: string = Networks.PUBLIC): TransactionReview | null {
+export function extractTransactionReview(xdr: string, networkPassphrase?: string): TransactionReview | null {
   if (xdr.length > 1024 * 1024) return null
+  // An envelope does not encode its network passphrase. Guessing here would
+  // bind the displayed digest and contract identities to the wrong network.
+  if (!networkPassphrase) return null
   try {
     const exactNetwork = resolveNetworkPassphrase(networkPassphrase)
     const parsed = TransactionBuilder.fromXDR(xdr, exactNetwork)
@@ -240,7 +285,7 @@ export function scoreableTargets(review: TransactionReview): ReviewTarget[] {
   const seen = new Set<string>()
   return review.operations.flatMap((operation) => operation.targets).filter((target) => {
     if (target.type !== 'account') return false
-    const key = `${target.type}:${target.value}`
+    const key = `${target.networkPassphrase}:${target.type}:${target.value}`
     if (seen.has(key)) return false
     seen.add(key); return true
   })

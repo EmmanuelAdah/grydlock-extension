@@ -361,7 +361,10 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
     resolveReviewOutcome(
       message.xdr,
       {
-        getScore,
+        // The current local adapter only accepts account strings. Keep that
+        // projection here, after the review engine has enforced a typed,
+        // network-scoped account target.
+        getScore: (target) => getScore(target.value),
         requestDecision: (review) => requestDecision(message.requestId, review),
       },
       message.networkPassphrase,

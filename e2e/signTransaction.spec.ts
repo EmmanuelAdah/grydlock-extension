@@ -8,6 +8,7 @@ import {
   Account,
   Asset,
   Keypair,
+  Memo,
   Networks,
   Operation,
   TransactionBuilder,
@@ -42,6 +43,23 @@ function buildPaymentXdr() {
     networkPassphrase: Networks.TESTNET,
   })
     .addOperation(Operation.payment({ destination, asset: Asset.native(), amount: '10' }))
+    .setTimeout(30)
+    .build()
+    .toXDR()
+}
+
+function buildSemanticReviewXdr() {
+  const source = Keypair.random().publicKey()
+  const destination = Keypair.random().publicKey()
+  const account = new Account(source, '0')
+
+  return new TransactionBuilder(account, {
+    fee: '100',
+    networkPassphrase: Networks.TESTNET,
+  })
+    .addOperation(Operation.payment({ destination, asset: Asset.native(), amount: '10' }))
+    .addOperation(Operation.setOptions({ signer: { ed25519PublicKey: destination, weight: 1 } }))
+    .addMemo(Memo.text('review-invoice-42'))
     .setTimeout(30)
     .build()
     .toXDR()
@@ -219,6 +237,33 @@ test.describe('Freighter signTransaction interception', () => {
           code: -4,
         },
       },
+    })
+  })
+
+  test('renders the full semantic review in the interception popup', async () => {
+    const popupPromise = harness!.context.waitForEvent('page')
+    const responsePromise = submitTransaction(harness!.page, buildSemanticReviewXdr())
+    const popup = await popupPromise
+
+    await expect(popup.locator('.review-summary p').filter({ hasText: 'Network:' })).toContainText(
+      Networks.TESTNET,
+    )
+    await expect(popup.locator('.review-summary p').filter({ hasText: 'Envelope:' })).toContainText(
+      '2 operations',
+    )
+    await expect(
+      popup.locator('.review-summary p').filter({ hasText: 'Memo (text):' }),
+    ).toContainText('review-invoice-42')
+    await expect(popup.getByRole('alert', { name: 'Transaction review findings' })).toContainText(
+      'Account authority change',
+    )
+    await expect(popup.getByText(/#1 Payment — understood/)).toBeVisible()
+    await expect(popup.getByText(/#2 Change account options — understood/)).toBeVisible()
+
+    await makeDecision(Promise.resolve(popup), 'Cancel')
+    await expect(responsePromise).resolves.toMatchObject({
+      freighterSawReviewedRequest: false,
+      response: { source: FREIGHTER_RESPONSE_SOURCE },
     })
   })
 
