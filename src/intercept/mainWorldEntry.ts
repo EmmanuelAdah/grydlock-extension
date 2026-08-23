@@ -1,4 +1,5 @@
 import { WINDOW_REQUEST_TYPE, WINDOW_RESPONSE_TYPE, type Outcome } from './protocol'
+import { reportAdapterStatus, startProtectionHeartbeat } from './protectionHandshake'
 
 /**
  * Real Freighter (`@stellar/freighter-api`) does not expose a callable
@@ -10,6 +11,8 @@ import { WINDOW_REQUEST_TYPE, WINDOW_RESPONSE_TYPE, type Outcome } from './proto
 const FREIGHTER_REQUEST_SOURCE = 'FREIGHTER_EXTERNAL_MSG_REQUEST'
 const FREIGHTER_RESPONSE_SOURCE = 'FREIGHTER_EXTERNAL_MSG_RESPONSE'
 const SUBMIT_TRANSACTION_TYPE = 'SUBMIT_TRANSACTION'
+
+startProtectionHeartbeat('freighter')
 
 interface FreighterSubmitTransactionRequest {
   source: typeof FREIGHTER_REQUEST_SOURCE
@@ -54,6 +57,11 @@ window.addEventListener(
   (event) => {
     if (event.source !== window) return
     const data = event.data as Partial<FreighterSubmitTransactionRequest> | undefined
+    if (data?.source === FREIGHTER_REQUEST_SOURCE && data.type !== SUBMIT_TRANSACTION_TYPE) {
+      reportAdapterStatus('freighter', 'adapter-incompatible')
+      return
+    }
+
     if (
       data?.source !== FREIGHTER_REQUEST_SOURCE ||
       data.type !== SUBMIT_TRANSACTION_TYPE ||

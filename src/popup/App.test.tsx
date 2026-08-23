@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { axe, toHaveNoViolations } from 'jest-axe'
@@ -10,6 +10,11 @@ expect.extend(toHaveNoViolations)
 describe('App', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
+    window.history.pushState(null, '', '?dev=score')
+  })
+
+  afterEach(() => {
+    window.history.pushState(null, '', '/')
   })
 
   it('shows a loading state before the adapter resolves', () => {
@@ -23,7 +28,10 @@ describe('App', () => {
     render(<App />)
     expect(await screen.findByText(/critical risk/i)).toBeInTheDocument()
     expect(screen.getByText('Score: 85')).toBeInTheDocument()
-    expect(screen.getByText(/critical risk/i).closest('.popup')).toHaveAttribute('data-tier', 'critical')
+    expect(screen.getByText(/critical risk/i).closest('.popup')).toHaveAttribute(
+      'data-tier',
+      'critical',
+    )
     expect(screen.getByText(/critical risk/i).closest('.popup')).toHaveStyle({
       '--tier-accent-light': '#c62828',
       '--tier-accent-dark': '#ef9a9a',
@@ -73,7 +81,9 @@ describe('App', () => {
     await screen.findByText(/high risk/i)
     const proceedButton = screen.getByText('Proceed')
     expect(proceedButton).toBeDisabled()
-    fireEvent.click(screen.getByLabelText(/i understand this destination shows strong risk signals/i))
+    fireEvent.click(
+      screen.getByLabelText(/i understand this destination shows strong risk signals/i),
+    )
     expect(proceedButton).toBeEnabled()
   })
 
@@ -128,28 +138,23 @@ describe('App in intercept mode', () => {
 
   it('renders the tier from URL params without calling the adapter', async () => {
     const getScoreSpy = vi.spyOn(adapter, 'getScore')
-    window.history.pushState(
-      null,
-      '',
-      '?mode=intercept&requestId=req-1&destination=GDEST&score=85',
-    )
+    window.history.pushState(null, '', '?mode=intercept&requestId=req-1&destination=GDEST&score=85')
     const { container } = render(<App />)
     expect(screen.getByText(/critical risk/i)).toBeInTheDocument()
     expect(screen.getByText('GDEST')).toBeInTheDocument()
-    expect(screen.getByText(/critical risk/i).closest('.popup')).toHaveAttribute('data-tier', 'critical')
+    expect(screen.getByText(/critical risk/i).closest('.popup')).toHaveAttribute(
+      'data-tier',
+      'critical',
+    )
     expect(getScoreSpy).not.toHaveBeenCalled()
-    
+
     // a11y check
     const results = await axe(container)
     expect(results).toHaveNoViolations()
   })
 
   it('sends the decision and closes on Proceed', () => {
-    window.history.pushState(
-      null,
-      '',
-      '?mode=intercept&requestId=req-1&destination=GDEST&score=10',
-    )
+    window.history.pushState(null, '', '?mode=intercept&requestId=req-1&destination=GDEST&score=10')
     const closeSpy = vi.spyOn(window, 'close').mockImplementation(() => {})
     render(<App />)
     fireEvent.click(screen.getByText('Proceed'))
@@ -162,24 +167,18 @@ describe('App in intercept mode', () => {
   })
 
   it('blocks high-risk proceed until the user confirms', () => {
-    window.history.pushState(
-      null,
-      '',
-      '?mode=intercept&requestId=req-1&destination=GDEST&score=60',
-    )
+    window.history.pushState(null, '', '?mode=intercept&requestId=req-1&destination=GDEST&score=60')
     render(<App />)
     const proceedButton = screen.getByText('Proceed')
     expect(proceedButton).toBeDisabled()
-    fireEvent.click(screen.getByLabelText(/i understand this destination shows strong risk signals/i))
+    fireEvent.click(
+      screen.getByLabelText(/i understand this destination shows strong risk signals/i),
+    )
     expect(proceedButton).toBeEnabled()
   })
 
   it('blocks critical-risk proceed until the user types the confirmation phrase', () => {
-    window.history.pushState(
-      null,
-      '',
-      '?mode=intercept&requestId=req-1&destination=GDEST&score=85',
-    )
+    window.history.pushState(null, '', '?mode=intercept&requestId=req-1&destination=GDEST&score=85')
     render(<App />)
     const proceedButton = screen.getByText('Proceed')
     expect(proceedButton).toBeDisabled()
@@ -190,11 +189,7 @@ describe('App in intercept mode', () => {
   })
 
   it('sends cancel and closes on Cancel', () => {
-    window.history.pushState(
-      null,
-      '',
-      '?mode=intercept&requestId=req-1&destination=GDEST&score=10',
-    )
+    window.history.pushState(null, '', '?mode=intercept&requestId=req-1&destination=GDEST&score=10')
     const closeSpy = vi.spyOn(window, 'close').mockImplementation(() => {})
     render(<App />)
     fireEvent.click(screen.getByText('Cancel'))

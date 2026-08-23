@@ -4,6 +4,10 @@ import {
   MAX_REQUEST_ID_LENGTH,
   MAX_XDR_LENGTH,
   isRuntimeDecisionMadeMessage,
+  isRuntimeProtectionAdapterStatusMessage,
+  isRuntimeProtectionBridgeOnlineMessage,
+  isRuntimeProtectionHandshakeAckMessage,
+  isRuntimeProtectionHandshakeMessage,
   isRuntimeSignRequestMessage,
 } from './messageValidation'
 
@@ -84,6 +88,70 @@ describe('isRuntimeSignRequestMessage', () => {
     },
   ])('rejects values over each explicit size limit %#', (message) => {
     expect(isRuntimeSignRequestMessage(message)).toBe(false)
+  })
+})
+
+describe('protection health message validation', () => {
+  const health = {
+    type: 'PROTECTION_HANDSHAKE',
+    nonce: 'health-nonce',
+    adapter: 'freighter',
+    protocolVersion: 1,
+  }
+
+  it('accepts the closed-set non-financial handshake and acknowledgment shapes', () => {
+    expect(
+      isRuntimeProtectionBridgeOnlineMessage({
+        type: 'PROTECTION_BRIDGE_ONLINE',
+        protocolVersion: 1,
+      }),
+    ).toBe(true)
+    expect(isRuntimeProtectionHandshakeMessage(health)).toBe(true)
+    expect(
+      isRuntimeProtectionHandshakeAckMessage({ ...health, type: 'PROTECTION_HANDSHAKE_ACK' }),
+    ).toBe(true)
+  })
+
+  it('rejects incompatible, malformed, and value-bearing health payloads', () => {
+    expect(isRuntimeProtectionHandshakeMessage({ ...health, protocolVersion: 2 })).toBe(false)
+    expect(isRuntimeProtectionHandshakeMessage({ ...health, nonce: '' })).toBe(false)
+    expect(isRuntimeProtectionHandshakeMessage({ ...health, xdr: 'AAAA-real-transaction' })).toBe(
+      false,
+    )
+    expect(isRuntimeProtectionHandshakeMessage({ ...health, account: 'GACCOUNT' })).toBe(false)
+    expect(
+      isRuntimeProtectionHandshakeAckMessage({
+        ...health,
+        type: 'PROTECTION_HANDSHAKE_ACK',
+        decision: 'proceed',
+      }),
+    ).toBe(false)
+    expect(
+      isRuntimeProtectionBridgeOnlineMessage({
+        type: 'PROTECTION_BRIDGE_ONLINE',
+        protocolVersion: 1,
+        url: 'https://dapp.example',
+      }),
+    ).toBe(false)
+  })
+
+  it('accepts only known adapter failure classifications', () => {
+    expect(
+      isRuntimeProtectionAdapterStatusMessage({
+        type: 'PROTECTION_ADAPTER_STATUS',
+        adapter: 'albedo-popup',
+        status: 'unsupported',
+        protocolVersion: 1,
+      }),
+    ).toBe(true)
+    expect(
+      isRuntimeProtectionAdapterStatusMessage({
+        type: 'PROTECTION_ADAPTER_STATUS',
+        adapter: 'albedo-popup',
+        status: 'healthy',
+        protocolVersion: 1,
+      }),
+    ).toBe(false)
   })
 })
 

@@ -33,6 +33,21 @@ body {
   margin: 0 0 8px;
 }
 
+.protection-status {
+  --tier-accent-light: #546e7a;
+  --tier-accent-dark: #b0bec5;
+}
+
+.protection-status p {
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.status-meta {
+  color: var(--popup-muted);
+  font-size: 11px !important;
+}
+
 .destination {
   font-size: 11px;
   color: var(--popup-muted);

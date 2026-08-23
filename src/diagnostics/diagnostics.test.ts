@@ -5,6 +5,7 @@ import {
   DIAGNOSTIC_EVENTS,
   HEALTH_CHECKS,
   MAX_BUCKETS,
+  MAX_EVENTS_PER_BUCKET,
   buildReport,
   createState,
   findProhibitedContent,
@@ -150,12 +151,20 @@ describe('parseState', () => {
   it('returns empty state for values that are not diagnostics state', () => {
     expect(parseState(undefined, HOUR_START).buckets).toEqual([])
     expect(parseState(null, HOUR_START).buckets).toEqual([])
-    expect(parseState({ buckets: 'nope' }, HOUR_START).buckets).toEqual([])
+    expect(
+      parseState({ schemaVersion: DIAGNOSTICS_SCHEMA_VERSION, buckets: 'nope' }, HOUR_START)
+        .buckets,
+    ).toEqual([])
+    expect(
+      parseState({ schemaVersion: DIAGNOSTICS_SCHEMA_VERSION + 1, buckets: [] }, HOUR_START)
+        .buckets,
+    ).toEqual([])
   })
 
   it('drops unknown counter keys, non-numeric counts, and malformed buckets', () => {
     const parsed = parseState(
       {
+        schemaVersion: DIAGNOSTICS_SCHEMA_VERSION,
         buckets: [
           null,
           { hourStart: 'yesterday', counts: { 'decode.success': 1 } },
@@ -176,13 +185,37 @@ describe('parseState', () => {
       HOUR_START,
     )
 
-    expect(parsed.buckets).toEqual([{ hourStart: HOUR_START, counts: { 'decode.success': 2 } }])
+    expect(parsed.buckets).toEqual([])
   })
 
   it('drops buckets outside the retention window', () => {
     const parsed = parseState(
-      { buckets: [{ hourStart: HOUR_START, counts: { 'popup.opened': 1 } }] },
+      {
+        schemaVersion: DIAGNOSTICS_SCHEMA_VERSION,
+        buckets: [{ hourStart: HOUR_START, counts: { 'popup.opened': 1 } }],
+      },
       HOUR_START + RETENTION_OVERSHOOT,
+    )
+
+    expect(parsed.buckets).toEqual([])
+  })
+
+  it('rejects negative, non-finite, fractional, oversized, and expired persisted values', () => {
+    const parsed = parseState(
+      {
+        schemaVersion: DIAGNOSTICS_SCHEMA_VERSION,
+        buckets: [
+          { hourStart: -1, counts: { 'decode.success': 1 } },
+          { hourStart: Number.POSITIVE_INFINITY, counts: { 'decode.success': 1 } },
+          { hourStart: HOUR_START + 1.5, counts: { 'decode.success': 1 } },
+          { hourStart: HOUR_START, counts: { 'decode.success': -1 } },
+          { hourStart: HOUR_START, counts: { 'decode.success': Number.NaN } },
+          { hourStart: HOUR_START, counts: { 'decode.success': 1.5 } },
+          { hourStart: HOUR_START, counts: { 'decode.success': MAX_EVENTS_PER_BUCKET + 1 } },
+          { hourStart: HOUR_START - RETENTION_OVERSHOOT, counts: { 'decode.success': 1 } },
+        ],
+      },
+      HOUR_START,
     )
 
     expect(parsed.buckets).toEqual([])
@@ -221,6 +254,11 @@ describe('findProhibitedContent', () => {
     expect(findProhibitedContent({ xdr: `AAAAAg${'x'.repeat(70)}==` })).toContain('xdr-like-base64')
     expect(findProhibitedContent({ page: 'https://dapp.example/swap' })).toContain('url')
     expect(findProhibitedContent({ reporter: 'user@example.com' })).toContain('email')
+  })
+
+  it('detects prohibited field names even when their values do not match a value pattern', () => {
+    expect(findProhibitedContent({ requestId: 'opaque' })).toContain('prohibited-field')
+    expect(findProhibitedContent({ error: 'arbitrary failure' })).toContain('prohibited-field')
   })
 
   it('passes clean counter-only values', () => {

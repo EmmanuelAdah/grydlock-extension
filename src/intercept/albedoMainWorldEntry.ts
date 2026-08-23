@@ -49,9 +49,12 @@
  */
 
 import { WINDOW_REQUEST_TYPE, WINDOW_RESPONSE_TYPE, type Outcome } from './protocol'
+import { reportAdapterStatus, startProtectionHeartbeat } from './protectionHandshake'
 
 const ALBEDO_CONFIRM_ORIGIN = 'https://albedo.link'
 const ALBEDO_WINDOW_NAME = 'auth.albedo.link'
+
+startProtectionHeartbeat('albedo-popup')
 
 /**
  * Intents that carry an XDR field and therefore go through the risk pipeline.
@@ -67,19 +70,14 @@ function requestOutcome(xdr: string, networkPassphrase?: string): Promise<Outcom
   return new Promise((resolve) => {
     function onMessage(event: MessageEvent) {
       if (event.source !== window) return
-      const data = event.data as
-        | { type?: string; localId?: string; outcome?: string }
-        | undefined
+      const data = event.data as { type?: string; localId?: string; outcome?: string } | undefined
       if (data?.type !== WINDOW_RESPONSE_TYPE || data.localId !== localId) return
       window.removeEventListener('message', onMessage)
       const outcome = data.outcome
       resolve(outcome === 'proceed' || outcome === 'allow' ? outcome : 'cancel')
     }
     window.addEventListener('message', onMessage)
-    window.postMessage(
-      { type: WINDOW_REQUEST_TYPE, localId, xdr, networkPassphrase },
-      '*',
-    )
+    window.postMessage({ type: WINDOW_REQUEST_TYPE, localId, xdr, networkPassphrase }, '*')
   })
 }
 
@@ -94,8 +92,7 @@ function buildRejectionMessage(reqid: string): unknown {
       __reqid: reqid,
       error: {
         code: -4,
-        message:
-          'Action request was rejected by the user.',
+        message: 'Action request was rejected by the user.',
         ext: 'Rejected by Gryd Lock: user cancelled after reviewing the risk warning.',
       },
     },
@@ -111,13 +108,10 @@ window.open = function grydlockOpen(
   target?: string,
   features?: string,
 ): WindowProxy | null {
-  const urlStr = url instanceof URL ? url.href : url ?? ''
+  const urlStr = url instanceof URL ? url.href : (url ?? '')
 
   // Only intercept calls that are opening the Albedo confirmation popup.
-  if (
-    target !== ALBEDO_WINDOW_NAME ||
-    !urlStr.startsWith(ALBEDO_CONFIRM_ORIGIN)
-  ) {
+  if (target !== ALBEDO_WINDOW_NAME || !urlStr.startsWith(ALBEDO_CONFIRM_ORIGIN)) {
     return _originalOpen(url, target, features)
   }
 
@@ -160,7 +154,9 @@ window.open = function grydlockOpen(
 
             if (!xdr) {
               // No XDR available (e.g. a pay intent where albedo builds the tx
-              // itself) — allow through without scoring.
+              // itself) — allow through without scoring, but explicitly report
+              // that this route is unsupported rather than inheriting popup health.
+              reportAdapterStatus('albedo-popup', 'unsupported')
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               return (target.postMessage as any)(message, targetOrigin, ...rest)
             }
@@ -169,7 +165,11 @@ window.open = function grydlockOpen(
             requestOutcome(xdr, network).then((outcome) => {
               if (outcome === 'cancel') {
                 // Close the real popup and synthesize a rejection.
-                try { realPopup.close() } catch { /* cross-origin close is best-effort */ }
+                try {
+                  realPopup.close()
+                } catch {
+                  /* cross-origin close is best-effort */
+                }
                 window.postMessage(buildRejectionMessage(reqid), window.location.origin)
               } else {
                 // Allow: forward the original message to the real popup.
