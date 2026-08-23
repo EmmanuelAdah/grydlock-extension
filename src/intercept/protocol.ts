@@ -68,6 +68,17 @@ export interface RuntimeDecisionMadeMessage {
   decision: Decision
 }
 
+export interface RuntimeReviewRequestMessage {
+  type: 'GET_REVIEW'
+  requestId: string
+}
+
+export interface RuntimeReviewResponseMessage {
+  type: 'REVIEW_DATA'
+  requestId: string
+  review?: import('../review/model').AggregatedReview
+}
+
 export interface RuntimeSignRequestInfo {
   destination: string
   kind: 'payment' | 'contractInvocation'

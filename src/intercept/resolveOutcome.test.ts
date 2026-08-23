@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { resolveOutcome } from './resolveOutcome'
+import { resolveOutcome, resolveReviewOutcome } from './resolveOutcome'
 
 describe('resolveOutcome', () => {
   it('returns allow when no destinations can be determined', async () => {
@@ -110,5 +110,32 @@ describe('resolveOutcome', () => {
 
       expect(outcome).toBe('cancel')
     })
+  })
+})
+
+describe('resolveReviewOutcome', () => {
+  const opaqueReview = {
+    schemaVersion: 1 as const, policyVersion: 1 as const, networkPassphrase: 'Custom Network', xdrDigest: 'a'.repeat(64),
+    envelope: { type: 'transaction' as const, source: 'GSOURCE', operationCount: 1 }, memo: undefined,
+    operations: [{ index: 0, type: 'futureOperation', source: 'GSOURCE', coverage: 'opaque' as const, summary: 'Unknown', facts: [], targets: [], findings: [] }], findings: [],
+  }
+
+  it('fails closed for malformed XDR rather than allowing it as green', async () => {
+    await expect(resolveReviewOutcome('bad', { extractReview: () => null, getScore: vi.fn(), requestDecision: vi.fn() })).resolves.toBe('cancel')
+  })
+
+  it('sends opaque operations to review with an incomplete-coverage finding', async () => {
+    const requestDecision = vi.fn().mockResolvedValue('proceed')
+    await expect(resolveReviewOutcome('xdr', { extractReview: () => opaqueReview, getScore: vi.fn(), requestDecision })).resolves.toBe('proceed')
+    expect(requestDecision.mock.calls[0][0]).toMatchObject({ severity: 'warning' })
+    expect(requestDecision.mock.calls[0][0].findings).toEqual(expect.arrayContaining([expect.objectContaining({ code: 'incomplete-coverage' })]))
+  })
+
+  it('queries account targets but never claimable-balance targets', async () => {
+    const review = { ...opaqueReview, operations: [{ ...opaqueReview.operations[0], coverage: 'partial' as const, targets: [{ type: 'account' as const, value: 'GACCOUNT' }, { type: 'claimable-balance' as const, value: 'balance-id' }] }] }
+    const getScore = vi.fn().mockResolvedValue(5)
+    await resolveReviewOutcome('xdr', { extractReview: () => review, getScore, requestDecision: async () => 'cancel' })
+    expect(getScore).toHaveBeenCalledTimes(1)
+    expect(getScore).toHaveBeenCalledWith('GACCOUNT')
   })
 })

@@ -152,6 +152,20 @@ order it before another extension's listener. That browser limitation remains vi
 is a real-wallet release gate. Supported adapters and explicit exclusions are in
 [protection coverage](docs/protection-coverage.md).
 
+## Transaction review coverage
+
+Before a signing request reaches a wallet, Gryd Lock builds a local, versioned review of the
+exact XDR. It shows the exact network passphrase, network-bound digest, envelope/fee source,
+memo, ordered operations, static facts, typed targets, and semantic findings. Every SDK
+operation is classified as **understood**, **partial**, or **opaque**. Partial and opaque
+operations are always shown as incomplete review coverage; they are never presented as a
+low-risk assessment.
+
+Only Stellar account targets are eligible for the current destination scorer. Contract IDs,
+claimable-balance IDs, and liquidity-pool IDs remain typed local review data and are never
+misrepresented as account addresses. Static review does not simulate a transaction or claim to
+know ledger-dependent outcomes.
+
 ## How the Pieces Connect
 
 **Toolbar click (dev/testing)** — unchanged from the stub-only build:

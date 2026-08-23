@@ -6,6 +6,8 @@ import TierWarning from './TierWarning'
 import TrustedAddressesManager from './TrustedAddressesManager'
 import ProtectionStatusPanel from './ProtectionStatus'
 import type { RuntimeDecisionMadeMessage } from '../intercept/protocol'
+import type { AggregatedReview } from '../review/model'
+import { tierForReviewSeverity } from '../review/policy'
 import './App.css'
 
 const PLACEHOLDER_DESTINATION = 'GABCDEXAMPLE0000000000000000000000000000000000000000000'
@@ -79,6 +81,14 @@ function InterceptView({ params }: { params: URLSearchParams }) {
   const destinationsJson = params.get('destinations')
   const score = Number(params.get('score') ?? '0')
   const tier = tierForScore(score)
+  const [review, setReview] = useState<AggregatedReview | undefined>()
+
+  useEffect(() => {
+    if (!requestId || !chrome?.runtime?.sendMessage) return
+    chrome.runtime.sendMessage({ type: 'GET_REVIEW', requestId }, (response: { review?: AggregatedReview } | undefined) => {
+      if (response?.review) setReview(response.review)
+    })
+  }, [requestId])
 
   let destinations: DestinationRow[] = []
   if (destinationsJson) {
@@ -103,9 +113,10 @@ function InterceptView({ params }: { params: URLSearchParams }) {
 
   return (
     <TierWarning
-      tier={tier}
-      score={score}
+      tier={review ? tierForScore({ low: 10, elevated: 35, high: 60, critical: 85 }[tierForReviewSeverity(review.severity)]) : tier}
+      score={review ? { info: 10, warning: 35, high: 60, critical: 85 }[review.severity] : score}
       destinations={destinations}
+      review={review}
       onCancel={() => respond('cancel')}
       onProceed={() => respond('proceed')}
     />

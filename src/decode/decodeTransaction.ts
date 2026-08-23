@@ -47,7 +47,10 @@ function destinationsFor(op: OperationRecord): OperationDestinations {
         asset: assetLabel(op.asset),
       }
     case 'claimClaimableBalance':
-      return { destinations: [op.balanceId] }
+      // A balance ID is an opaque ledger identifier, not a Stellar account.
+      // It must remain in the transaction review but must never be sent to an
+      // account-risk oracle through this legacy destination projection.
+      return { destinations: [] }
     default:
       return { destinations: [] }
   }
@@ -95,7 +98,7 @@ export function extractDecodedDestination(tx: Pick<Transaction, 'operations' | '
 
 export function extractDestination(
   xdr: string,
-  networkPassphrase: string = Networks.TESTNET,
+  networkPassphrase: string = Networks.PUBLIC,
 ): DecodedBatch | null {
   try {
     const parsed = TransactionBuilder.fromXDR(xdr, resolveNetworkPassphrase(networkPassphrase))

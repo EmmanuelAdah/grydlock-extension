@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { axe } from 'jest-axe'
 import TierWarning from './TierWarning'
 import { tierForScore } from '../lib/tiers'
 import DevScoreSlider from './DevScoreSlider'
@@ -177,5 +178,28 @@ describe('TierWarning mouse interaction', () => {
     const { user, onProceed, proceed } = renderWarning(10)
     await user.click(proceed)
     expect(onProceed).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('TierWarning transaction review accessibility', () => {
+  it('exposes critical findings and every ordered operation to keyboard users', async () => {
+    const review = {
+      severity: 'critical' as const,
+      evidence: [],
+      findings: [{ code: 'authority-change', severity: 'high' as const, title: 'Account authority change', detail: 'Signer changed.', operationIndex: 0 }],
+      review: {
+        schemaVersion: 1 as const, policyVersion: 1 as const, networkPassphrase: 'Custom network', xdrDigest: 'a'.repeat(64),
+        envelope: { type: 'fee-bump' as const, source: 'GINNER', feeSource: 'GFEE', operationCount: 2 },
+        memo: { label: 'Memo (text)', value: 'invoice', provenance: 'xdr' as const }, findings: [],
+        operations: [0, 1].map((index) => ({ index, type: 'payment', source: 'GINNER', coverage: 'understood' as const, summary: 'Payment', facts: [{ label: 'Amount', value: String(index + 1), provenance: 'xdr' as const }], targets: [], findings: [] })),
+      },
+    }
+    const { container } = render(<TierWarning tier={tierForScore(85)} score={85} review={review} onCancel={() => {}} onProceed={() => {}} />)
+    expect(screen.getByRole('alert')).toHaveTextContent(/account authority change/i)
+    expect(screen.getByText(/#1 payment/i)).toBeInTheDocument()
+    expect(screen.getByText(/#2 payment/i)).toBeInTheDocument()
+    await userEvent.setup().tab()
+    expect(screen.getByRole('dialog')).toContainElement(document.activeElement as HTMLElement)
+    expect((await axe(container)).violations).toEqual([])
   })
 })

@@ -20,10 +20,11 @@ See [CONTRIBUTING.md](../../CONTRIBUTING.md#architecture-decision-records) for t
 
 ## Records
 
-No project ADRs have been accepted yet. Use [`0000-template.md`](0000-template.md) for the first proposal and add accepted records to this index in numeric order.
+Use [`0000-template.md`](0000-template.md) for new proposals and add accepted records to this index in numeric order.
 
 | ADR                                         | Title                               | Status   |
 | ------------------------------------------- | ----------------------------------- | -------- |
 | [0000](0000-template.md)                    | ADR template                        | Template |
 | [0001](0001-soroban-semantic-inspection.md) | Layered Soroban semantic inspection | Proposed |
 | [0002](0002-observable-protection-state.md) | Observable, fresh protection state  | Proposed |
+| [0003](0003-versioned-transaction-review.md) | Versioned local transaction review   | Proposed |

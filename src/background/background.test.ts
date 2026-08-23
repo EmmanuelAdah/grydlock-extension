@@ -70,12 +70,14 @@ describe('background message listener', () => {
 
   it('handles SIGN_REQUEST to SIGN_OUTCOME round trip and explicitly tests pendingDecisions lifecycle', async () => {
     // Intercept resolveOutcome to control when it finishes and observe requestDecision
-    vi.spyOn(resolveModule, 'resolveOutcome').mockImplementation(async (_xdr, deps) => {
+    vi.spyOn(resolveModule, 'resolveReviewOutcome').mockImplementation(async (_xdr, deps) => {
       // We must await it to test the round trip!
       const decision = await deps.requestDecision({
-        destinations: [{ destination: 'GDEST' }],
-        scores: [{ destination: 'GDEST', score: 42 }],
-        worstScore: 42,
+        review: {
+          schemaVersion: 1, policyVersion: 1, networkPassphrase: 'test', xdrDigest: 'digest',
+          envelope: { type: 'transaction', source: 'GDEST', operationCount: 1 }, operations: [], findings: [],
+        },
+        evidence: [], findings: [], severity: 'warning',
       })
       return decision === 'proceed' ? 'allow' : 'cancel'
     })
@@ -100,10 +102,10 @@ describe('background message listener', () => {
     const popupUrl = mockWindowsCreate.mock.calls[0][0].url as string
     expect(popupUrl).toContain('mode=intercept')
     expect(popupUrl).toContain('requestId=req-1')
-    expect(popupUrl).toContain('destination=GDEST')
-    expect(popupUrl).toContain('score=42')
+    expect(popupUrl).not.toContain('destination=')
+    expect(popupUrl).not.toContain('score=')
 
-    // Verify badge was set to '!' and color matching score 42 (elevated -> '#a86300')
+    // Review severity, not a score URL parameter, controls the badge.
     expect(mockSetBadgeText).toHaveBeenCalledWith({ text: '!' })
     expect(mockSetBadgeBackgroundColor).toHaveBeenCalledWith({ color: '#a86300' })
 
@@ -143,7 +145,7 @@ describe('background message listener', () => {
   })
 
   it('rejects malformed and oversized sign requests before any side effect', async () => {
-    const resolveOutcome = vi.spyOn(resolveModule, 'resolveOutcome')
+    const resolveOutcome = vi.spyOn(resolveModule, 'resolveReviewOutcome')
     const { pendingDecisions } = await import('./background')
     const listener = mockAddListener.mock.calls[0][0]
     const sendResponse = vi.fn()
@@ -194,7 +196,23 @@ describe('background message listener', () => {
     const { pendingDecisions } = await import('./background')
     const listener = mockAddListener.mock.calls[0][0]
     const resolvePending = vi.fn()
-    pendingDecisions.set('req-1', resolvePending)
+    pendingDecisions.set('req-1', {
+      resolve: resolvePending,
+      review: {
+        review: {
+          schemaVersion: 1,
+          policyVersion: 1,
+          networkPassphrase: 'test',
+          xdrDigest: 'digest',
+          envelope: { type: 'transaction', source: 'GTEST', operationCount: 0 },
+          operations: [],
+          findings: [],
+        },
+        evidence: [],
+        findings: [],
+        severity: 'info',
+      },
+    })
 
     const invalidDecisions: unknown[] = [
       { type: 'DECISION_MADE', requestId: 'req-1' },

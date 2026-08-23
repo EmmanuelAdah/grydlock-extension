@@ -44,6 +44,7 @@ export type SorobanWarningCode =
   | 'unbounded-approval'
   | 'long-lived-approval'
   | 'third-party-transfer'
+  | 'delegated-spend'
   | 'token-admin-operation'
   | 'hidden-authorization'
   | 'foreign-authorization'
@@ -451,6 +452,9 @@ function decodeInvokeContract(
   if (!movement) return
 
   semantics.movements.push(movement)
+  if (movement.spender && (movement.kind === 'transfer' || movement.kind === 'burn')) {
+    warnings.add('delegated-spend')
+  }
   if (
     movement.kind === 'transfer' &&
     movement.from &&

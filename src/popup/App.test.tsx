@@ -153,6 +153,61 @@ describe('App in intercept mode', () => {
     expect(results).toHaveNoViolations()
   })
 
+  it('loads and renders worker-resident review data without placing it in the URL', async () => {
+    const review = {
+      severity: 'high' as const,
+      evidence: [],
+      findings: [
+        {
+          code: 'authority-change',
+          severity: 'high' as const,
+          title: 'Account authority change',
+          detail: 'Signer changed.',
+          operationIndex: 0,
+        },
+      ],
+      review: {
+        schemaVersion: 1 as const,
+        policyVersion: 1 as const,
+        networkPassphrase: 'Custom network',
+        xdrDigest: 'a'.repeat(64),
+        envelope: { type: 'transaction' as const, source: 'GSOURCE', operationCount: 1 },
+        operations: [
+          {
+            index: 0,
+            type: 'setOptions',
+            source: 'GSOURCE',
+            coverage: 'understood' as const,
+            summary: 'Change account options',
+            facts: [],
+            targets: [],
+            findings: [],
+          },
+        ],
+        findings: [],
+      },
+    }
+    vi.mocked(chrome.runtime.sendMessage).mockImplementation((message, callback) => {
+      if (
+        (message as { type?: string }).type === 'GET_REVIEW' &&
+        typeof callback === 'function'
+      ) {
+        callback({ review })
+      }
+    })
+    window.history.pushState(null, '', '?mode=intercept&requestId=req-review')
+
+    render(<App />)
+
+    expect(await screen.findByText('Custom network')).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent(/account authority change/i)
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(
+      { type: 'GET_REVIEW', requestId: 'req-review' },
+      expect.any(Function),
+    )
+    expect(window.location.search).not.toContain('digest')
+  })
+
   it('sends the decision and closes on Proceed', () => {
     window.history.pushState(null, '', '?mode=intercept&requestId=req-1&destination=GDEST&score=10')
     const closeSpy = vi.spyOn(window, 'close').mockImplementation(() => {})
