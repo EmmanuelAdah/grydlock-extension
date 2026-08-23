@@ -241,6 +241,29 @@ describe('extractSorobanSemantics', () => {
     expect(semantics.warnings).toContain('long-lived-approval')
   })
 
+  it('distinguishes delegated spend from approval findings', () => {
+    const xdrString = buildXdr([
+      call(
+        USDC_CONTRACT,
+        'transfer_from',
+        new Address(RECIPIENT).toScVal(),
+        new Address(HOLDER).toScVal(),
+        new Address(SOURCE).toScVal(),
+        i128(1n),
+      ),
+    ])
+
+    const [semantics] = extractSorobanSemantics(xdrString, options)
+    expect(semantics.movements[0]).toMatchObject({
+      kind: 'transfer',
+      spender: RECIPIENT,
+      from: HOLDER,
+      to: SOURCE,
+    })
+    expect(semantics.warnings).toContain('delegated-spend')
+    expect(semantics.warnings).not.toContain('unbounded-approval')
+  })
+
   it('does not flag a bounded, short-lived approval', () => {
     const xdrString = buildXdr([
       call(
