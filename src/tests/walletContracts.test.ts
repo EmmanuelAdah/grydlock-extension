@@ -4,6 +4,14 @@ import freighterDeclineFixture from '../../tests/fixtures/contracts/freighter/de
 import albedoRequestFixture from '../../tests/fixtures/contracts/albedo/tx-intent-request.json'
 import albedoRejectFixture from '../../tests/fixtures/contracts/albedo/reject-response.json'
 
+
+interface AlbedoIntentPayload {
+  intent?: unknown
+  xdr?: unknown
+  network?: unknown
+  __reqid?: unknown
+}
+
 describe('Wallet Protocol Contract Verifications', () => {
   describe('Freighter Protocol Contract', () => {
     it('validates submission request message shape', () => {
@@ -26,8 +34,8 @@ describe('Wallet Protocol Contract Verifications', () => {
   describe('Albedo Intent Protocol Contract', () => {
     it('identifies destination-bearing intent payloads', () => {
       // Albedo popup proxy checks for intent === 'tx' | 'pay' and presence of xdr
-      const isDestinationBearingIntent = (payload: any) => {
-        return ['tx', 'pay'].includes(payload.intent) && typeof payload.xdr === 'string'
+      const isDestinationBearingIntent = (payload: AlbedoIntentPayload) => {
+        return ['tx', 'pay'].includes(payload.intent as string) && typeof payload.xdr === 'string'
       }
 
       expect(isDestinationBearingIntent(albedoRequestFixture)).toBe(true)
