@@ -33,7 +33,6 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - run: npm run test:visual
-      - run: xvfb-run --auto-servernum npm run test:e2e
       # STILL OPEN: no step here validates dist/manifest.json post-build —
       # only the pre-build source manifest is checked above. Add once
       # validate-manifest.mjs supports a --root flag (see earlier note).

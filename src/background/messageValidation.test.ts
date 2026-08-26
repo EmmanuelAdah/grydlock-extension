@@ -8,6 +8,7 @@ import {
   isRuntimeProtectionBridgeOnlineMessage,
   isRuntimeProtectionHandshakeAckMessage,
   isRuntimeProtectionHandshakeMessage,
+  isRuntimeReviewRequestMessage,
   isRuntimeSignRequestMessage,
 } from './messageValidation'
 
@@ -184,5 +185,19 @@ describe('isRuntimeDecisionMadeMessage', () => {
     },
   ])('rejects malformed decisions %#', (message) => {
     expect(isRuntimeDecisionMadeMessage(message)).toBe(false)
+  })
+})
+
+describe('isRuntimeReviewRequestMessage', () => {
+  it('accepts only the bounded, closed-set popup review request', () => {
+    expect(isRuntimeReviewRequestMessage({ type: 'GET_REVIEW', requestId: 'req-1' })).toBe(true)
+    expect(isRuntimeReviewRequestMessage({ type: 'GET_REVIEW', requestId: 'req-1', xdr: 'secret' })).toBe(false)
+    expect(isRuntimeReviewRequestMessage({ type: 'GET_REVIEW', requestId: '' })).toBe(false)
+    expect(
+      isRuntimeReviewRequestMessage({
+        type: 'GET_REVIEW',
+        requestId: 'r'.repeat(MAX_REQUEST_ID_LENGTH + 1),
+      }),
+    ).toBe(false)
   })
 })
